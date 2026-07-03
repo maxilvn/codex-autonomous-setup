@@ -1,16 +1,46 @@
-# Codex Autonomous Setup
+# Codex GitHub Harness
 
-An opinionated open-source workflow for running Codex like a disciplined GitHub
-coding agent.
+An opinionated open-source workflow harness that makes Codex behave like a
+disciplined GitHub coding agent.
 
-This repository packages a reusable `AGENTS.md`, focused Codex skills, and
-practical documentation for teams that want Codex to work through implementation
-tasks end to end: isolate work, make changes, verify them, self-review the diff,
-push a branch, and open a pull request.
+## Quick Start
+
+```sh
+npx codex-github-harness init
+```
+
+Or install globally:
+
+```sh
+npm install -g codex-github-harness
+codex-github-harness init
+```
+
+The installer will ask you:
+
+- Full autonomous or minimal workflow
+- Skills global (`~/.codex/skills/`) or local (`./skills/`)
+- Branch prefix (default: `codex/`)
+- Worktree directory pattern
+
+It writes or appends `AGENTS.md` in your repo, installs skills, copies docs and
+examples, and shows next steps.
+
+### Dry Run
+
+```sh
+npx codex-github-harness init --dry-run
+```
+
+### Target a Specific Repo
+
+```sh
+npx codex-github-harness init /path/to/your/repo
+```
 
 ## What This Is
 
-Codex is most useful when the operating rules are explicit. This setup gives
+Codex is most useful when the operating rules are explicit. This harness gives
 Codex a consistent workflow for repository work:
 
 - Use clean task branches and git worktrees.
@@ -23,32 +53,10 @@ Codex a consistent workflow for repository work:
 The goal is not to make Codex "magical." The goal is to make its behavior
 predictable, reviewable, and close to how a careful human engineer would work.
 
-## Quick Start
-
-1. Copy `AGENTS.md` into the root of a repository where you use Codex.
-2. Install the included skills or keep them in the repo as team documentation.
-3. Adjust the GitHub workflow rules in `AGENTS.md` for your branch names,
-   worktree directory, and merge policy.
-4. Start Codex in the repository and ask it to implement a specific task.
-
-For a lighter setup, start from `examples/AGENTS.minimal.md`.
-
-## Skill Installation
-
-To install the bundled skills for your local Codex setup:
-
-```sh
-mkdir -p ~/.codex/skills
-cp -R skills/github-pr-workflow ~/.codex/skills/
-cp -R skills/post-implementation-review ~/.codex/skills/
-```
-
-Then mention the skill by name in your task or reference it from your
-`AGENTS.md`.
-
 ## Included Files
 
 - `AGENTS.md` - the full autonomous workflow instruction set.
+- `templates/` - all files the installer copies into your repo.
 - `skills/github-pr-workflow/SKILL.md` - reusable GitHub branch, worktree,
   commit, push, and PR workflow.
 - `skills/post-implementation-review/SKILL.md` - reusable post-change review and
@@ -80,6 +88,7 @@ Use the minimal example when:
 
 ## Requirements
 
+- Node.js 18 or higher
 - Git
 - GitHub CLI (`gh`) for PR creation
 - A GitHub account authenticated through `gh auth login`

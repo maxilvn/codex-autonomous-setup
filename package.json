@@ -1,0 +1,47 @@
+{
+  "name": "codex-github-harness",
+  "version": "0.1.0",
+  "description": "An opinionated workflow harness that makes Codex behave like a disciplined GitHub coding agent.",
+  "type": "module",
+  "bin": {
+    "codex-github-harness": "bin/cli.mjs"
+  },
+  "files": [
+    "bin",
+    "templates",
+    "AGENTS.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test bin/cli.test.mjs",
+    "format": "prettier --write \"**/*.{js,mjs,md,json}\" --prose-wrap always --print-width 80"
+  },
+  "keywords": [
+    "codex",
+    "github",
+    "agent",
+    "workflow",
+    "autonomous",
+    "harness",
+    "agentic",
+    "pull-request",
+    "code-review"
+  ],
+  "license": "MIT",
+  "author": "Maxi Lvn",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/maxilvn/codex-github-harness.git"
+  },
+  "homepage": "https://github.com/maxilvn/codex-github-harness",
+  "bugs": {
+    "url": "https://github.com/maxilvn/codex-github-harness/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "prompts": "^2.4.2"
+  }
+}
