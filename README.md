@@ -1,5 +1,7 @@
 # Codex GitHub Harness
 
+![Codex GitHub Harness preview](assets/social-preview.jpg)
+
 An opinionated open-source workflow harness that makes Codex behave like a
 disciplined GitHub coding agent.
 
