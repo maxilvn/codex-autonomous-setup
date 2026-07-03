@@ -1,0 +1,23 @@
+[package]
+name = "gtm-agent-desktop"
+version = "0.1.0"
+description = "Local Codex-powered GTM backend"
+authors = ["Maxi Lvn"]
+edition = "2021"
+
+[lib]
+name = "gtm_agent_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.4.0", features = [] }
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+opener = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "2.8.0", features = [] }
+thiserror = "1.0"
+uuid = { version = "1.10", features = ["v4", "serde"] }

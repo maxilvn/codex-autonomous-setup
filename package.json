@@ -14,7 +14,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test bin/cli.test.mjs",
+    "test": "node --test bin/cli.test.mjs && npm --workspace @gtm-agent/desktop run build && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml",
     "format": "prettier --write \"**/*.{js,mjs,md,json}\" --prose-wrap always --print-width 80"
   },
   "keywords": [
@@ -41,6 +41,9 @@
   "engines": {
     "node": ">=18"
   },
+  "workspaces": [
+    "apps/desktop"
+  ],
   "dependencies": {
     "prompts": "^2.4.2"
   }
