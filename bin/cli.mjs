@@ -58,25 +58,33 @@ function copyDir(srcRel, destRel) {
   console.log("  " + (dryRun ? "[dry-run] " : "") + "copied: " + destRel + "/");
 }
 
-async function main() {
-  console.log("\ncodex-github-harness init\n");
+async function askQuestions() {
+  const answers = {};
 
+  // 1. Workflow mode
   const { mode } = await prompts({
     type: "select",
     name: "mode",
     message: "Which workflow do you want?",
     choices: [
-      { title: "Full autonomous (branches, PRs, self-review)", value: "full" },
-      { title: "Minimal (local edits, no auto-PR)", value: "minimal" },
+      {
+        title: "Full autonomous (branches, worktrees, PRs, self-review)",
+        value: "full",
+      },
+      {
+        title: "Minimal (local edits, no auto-PR, commit only when asked)",
+        value: "minimal",
+      },
     ],
     initial: 0,
   });
-
   if (!mode) {
     console.log("Aborted.");
     process.exit(0);
   }
+  answers.mode = mode;
 
+  // 2. Skill scope
   const { skillScope } = await prompts({
     type: "select",
     name: "skillScope",
@@ -87,33 +95,123 @@ async function main() {
     ],
     initial: 0,
   });
+  answers.skillScope = skillScope;
 
-  const { branchPrefix } = await prompts({
-    type: "text",
-    name: "branchPrefix",
+  // 3. Branch prefix
+  const { branchChoice } = await prompts({
+    type: "select",
+    name: "branchChoice",
     message: "Branch prefix for task branches?",
-    initial: "codex/",
+    choices: [
+      { title: "codex/ (default)", value: "codex/" },
+      { title: "Custom prefix", value: "custom" },
+    ],
+    initial: 0,
   });
+  answers.branchChoice = branchChoice;
 
-  const { worktreeDir } = await prompts({
-    type: "text",
-    name: "worktreeDir",
-    message: "Worktree directory pattern (relative to repo)?",
-    initial: "../codex-worktrees/<task>",
+  if (branchChoice === "custom") {
+    const { customPrefix } = await prompts({
+      type: "text",
+      name: "customPrefix",
+      message: "Enter your branch prefix:",
+      initial: "codex/",
+    });
+    answers.branchPrefix = customPrefix || "codex/";
+  } else {
+    answers.branchPrefix = "codex/";
+  }
+
+  // 4. Worktree directory
+  const { worktreeChoice } = await prompts({
+    type: "select",
+    name: "worktreeChoice",
+    message: "Where should worktrees be created?",
+    choices: [
+      {
+        title: "../worktrees/<task> (default, outside repo)",
+        value: "default",
+      },
+      { title: "./worktrees/<task> (inside repo)", value: "inside" },
+      { title: "Custom path", value: "custom" },
+    ],
+    initial: 0,
   });
+  answers.worktreeChoice = worktreeChoice;
+
+  if (worktreeChoice === "inside") {
+    answers.worktreeDir = "./worktrees/";
+  } else if (worktreeChoice === "custom") {
+    const { customPath } = await prompts({
+      type: "text",
+      name: "customPath",
+      message: "Enter worktree path (relative to repo):",
+      initial: "../worktrees/",
+    });
+    answers.worktreeDir = customPath || "../worktrees/";
+  } else {
+    answers.worktreeDir = "../worktrees/";
+  }
+
+  return answers;
+}
+
+function summarize(a) {
+  const modeLabel =
+    a.mode === "full" ? "Full autonomous" : "Minimal (local only)";
+  const skillLabel =
+    a.skillScope === "global"
+      ? "Global (~/.codex/skills/)"
+      : "Local (./skills/)";
+  return [
+    "  Workflow:    " + modeLabel,
+    "  Skills:      " + skillLabel,
+    "  Branch:      " + a.branchPrefix,
+    "  Worktrees:   " + a.worktreeDir,
+  ].join("\n");
+}
+
+async function main() {
+  console.log("\ncodex-github-harness init\n");
+
+  let answers = await askQuestions();
+
+  // Confirm or redo
+  while (true) {
+    console.log("\nYour configuration:");
+    console.log(summarize(answers));
+
+    const { confirm } = await prompts({
+      type: "select",
+      name: "confirm",
+      message: "Looks good?",
+      choices: [
+        { title: "Yes, proceed", value: "yes" },
+        { title: "No, redo setup", value: "redo" },
+      ],
+      initial: 0,
+    });
+
+    if (confirm === "yes") break;
+    if (!confirm) {
+      console.log("Aborted.");
+      process.exit(0);
+    }
+    answers = await askQuestions();
+  }
 
   console.log("\nTarget: " + target + "\n");
 
   // Write or append AGENTS.md
   const agentsFile =
-    mode === "full" ? "AGENTS.md" : "examples/AGENTS.minimal.md";
+    answers.mode === "full" ? "AGENTS.md" : "examples/AGENTS.minimal.md";
   const agentsContent = readTemplate(agentsFile)
-    .replace(/codex\//g, branchPrefix)
-    .replace(/\.\.\/codex-worktrees\//g, worktreeDir.replace(/<task>/g, ""));
+    .replace(/codex\//g, answers.branchPrefix)
+    .replace(/\.\.\/worktrees\//g, answers.worktreeDir);
   writeOrAppend("AGENTS.md", agentsContent);
 
   // Install skills
-  if (skillScope === "global") {
+  if (answers.skillScope === "global") {
     const skillsDest = join(
       process.env.HOME || process.env.USERPROFILE,
       ".codex",
@@ -157,14 +255,24 @@ async function main() {
     console.log("  skip (exists): LICENSE");
   }
 
+  // Skills guide
+  console.log("\nInstalled skills:");
+  console.log(
+    "  github-pr-workflow          Branch, worktree, commit, push, and PR flow for GitHub tasks.",
+  );
+  console.log(
+    "  post-implementation-review  Self-review loop: diff check, cleanup, re-verify before reporting done.",
+  );
+
   console.log("\nDone.");
   console.log("\nNext steps:");
   console.log("  1. Review AGENTS.md in your repo root.");
-  if (mode === "full") {
+  if (answers.mode === "full") {
     console.log("  2. Make sure gh is authenticated: gh auth status");
     console.log("  3. Start Codex and ask it to implement a task.");
   } else {
     console.log("  2. Start Codex and ask it to implement a task.");
+    console.log("  3. Codex will edit locally and commit only when you ask.");
   }
   console.log();
 }

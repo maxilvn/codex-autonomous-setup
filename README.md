@@ -16,15 +16,36 @@ npm install -g codex-github-harness
 codex-github-harness init
 ```
 
-The installer will ask you:
+The installer walks you through four questions and sets up everything:
 
-- Full autonomous or minimal workflow
-- Skills global (`~/.codex/skills/`) or local (`./skills/`)
-- Branch prefix (default: `codex/`)
-- Worktree directory pattern
+### 1. Workflow Mode
 
-It writes or appends `AGENTS.md` in your repo, installs skills, copies docs and
-examples, and shows next steps.
+- **Full autonomous** -- Codex creates branches, uses worktrees, runs
+  verification, self-reviews the diff, pushes, and opens PRs. The complete
+  disciplined-engineer workflow.
+- **Minimal** -- Codex inspects the repo, makes targeted edits, runs checks, and
+  reviews the diff, but stays local. No branches, no worktrees, no PRs. Commits
+  only when you explicitly ask.
+
+### 2. Skill Scope
+
+- **Global (`~/.codex/skills/`)** -- Skills are available in every Codex session
+  on this machine, regardless of which repo you are in.
+- **Local (`./skills/`)** -- Skills are installed into the current repo and
+  version-controlled with the project. Best for team setups.
+
+### 3. Branch Prefix
+
+- **`codex/` (default)** -- Press Enter to accept. Codex creates branches like
+  `codex/fix-auth-bug`.
+- **Custom** -- Enter your own prefix (e.g. `ai/`, `bot/`, your team name).
+
+### 4. Worktree Directory
+
+- **`../worktrees/<task>` (default)** -- Worktrees live outside the repo,
+  keeping your main checkout clean.
+- **`./worktrees/<task>`** -- Worktrees live inside the repo directory.
+- **Custom** -- Enter any path relative to the repo root.
 
 ### Dry Run
 
@@ -53,23 +74,32 @@ Codex a consistent workflow for repository work:
 The goal is not to make Codex "magical." The goal is to make its behavior
 predictable, reviewable, and close to how a careful human engineer would work.
 
+## Included Skills
+
+The installer copies two reusable Codex skills:
+
+- **github-pr-workflow** -- Branch, worktree, commit, push, and PR flow for
+  GitHub tasks. Keeps repo work isolated, reviewable, and easy to merge.
+- **post-implementation-review** -- Self-review loop: diff check, cleanup,
+  re-verify before reporting done. Catches bugs, dead code, and style drift.
+
 ## Included Files
 
-- `AGENTS.md` - the full autonomous workflow instruction set.
-- `templates/` - all files the installer copies into your repo.
-- `skills/github-pr-workflow/SKILL.md` - reusable GitHub branch, worktree,
+- `AGENTS.md` -- the full autonomous workflow instruction set.
+- `templates/` -- all files the installer copies into your repo.
+- `skills/github-pr-workflow/SKILL.md` -- reusable GitHub branch, worktree,
   commit, push, and PR workflow.
-- `skills/post-implementation-review/SKILL.md` - reusable post-change review and
-  cleanup loop.
-- `examples/AGENTS.minimal.md` - smaller version for teams that want fewer
+- `skills/post-implementation-review/SKILL.md` -- reusable post-change review
+  and cleanup loop.
+- `examples/AGENTS.minimal.md` -- smaller version for teams that want fewer
   rules.
-- `examples/AGENTS.full.md` - full version with skill references and stricter
+- `examples/AGENTS.full.md` -- full version with skill references and stricter
   reporting.
-- `docs/workflow.md` - how the workflow runs from task intake to PR.
-- `docs/customization.md` - what to change before using this in your own
+- `docs/workflow.md` -- how the workflow runs from task intake to PR.
+- `docs/customization.md` -- what to change before using this in your own
   environment.
-- `docs/faq.md` - common questions and tradeoffs.
-- `CONTRIBUTING.md` - contribution guidelines for improving the setup.
+- `docs/faq.md` -- common questions and tradeoffs.
+- `CONTRIBUTING.md` -- contribution guidelines for improving the setup.
 
 ## Recommended Setup
 
