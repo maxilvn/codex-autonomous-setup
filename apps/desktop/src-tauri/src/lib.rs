@@ -1,10 +1,10 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::Emitter;
@@ -119,6 +119,11 @@ const DOCS: [(&str, &str, &str); 4] = [
     ),
     ("brand_voice", "brand-voice.md", "Brand Voice"),
 ];
+
+const RPC_INITIALIZE_ID: i64 = 1;
+const RPC_THREAD_START_ID: i64 = 2;
+const RPC_THREAD_NAME_ID: i64 = 3;
+const RPC_TURN_START_ID: i64 = 4;
 
 pub fn run() {
     tauri::Builder::default()
@@ -266,15 +271,19 @@ fn execute_initial_analysis(
             .append(true)
             .open(&log_path)?,
     ));
-    let thread_id = Arc::new(Mutex::new(None::<String>));
 
     let mut child = Command::new(binary)
-        .args(codex_exec_args(project, &prompt))
+        .args(codex_app_server_args())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|err| AppError::Codex(format!("failed to launch codex: {err}")))?;
 
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| AppError::Codex("missing codex stdin".into()))?;
     let stdout = child
         .stdout
         .take()
@@ -284,52 +293,112 @@ fn execute_initial_analysis(
         .take()
         .ok_or_else(|| AppError::Codex("missing codex stderr".into()))?;
 
-    let stdout_log = Arc::clone(&log_file);
-    let stdout_thread_id = Arc::clone(&thread_id);
-    let stdout_handle = thread::spawn(move || -> AppResult<()> {
-        for line in BufReader::new(stdout).lines() {
-            let line = line?;
-            if let Some(id) = codex_thread_id_from_line(&line) {
-                *stdout_thread_id
-                    .lock()
-                    .map_err(|_| AppError::Codex("thread id lock poisoned".into()))? = Some(id);
-            }
-            writeln!(
-                stdout_log
-                    .lock()
-                    .map_err(|_| AppError::Codex("log lock poisoned".into()))?,
-                "{line}"
-            )?;
-        }
-        Ok(())
-    });
-
     let stderr_log = Arc::clone(&log_file);
     let stderr_handle = thread::spawn(move || -> AppResult<()> {
         for line in BufReader::new(stderr).lines() {
-            writeln!(
-                stderr_log
-                    .lock()
-                    .map_err(|_| AppError::Codex("log lock poisoned".into()))?,
-                "{}",
-                serde_json::json!({ "type": "stderr", "message": line? })
+            log_jsonl(
+                &stderr_log,
+                &serde_json::json!({ "stream": "stderr", "message": line? }),
             )?;
         }
         Ok(())
     });
 
+    send_rpc(&mut stdin, &initialize_request(), &log_file)?;
+
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let mut thread_id = None::<String>;
+    let mut turn_error = None::<String>;
+    let mut turn_completed = false;
+
+    while reader.read_line(&mut line)? > 0 {
+        let raw_line = line.trim_end_matches(['\r', '\n']).to_string();
+        line.clear();
+        if raw_line.is_empty() {
+            continue;
+        }
+        log_raw_line(&log_file, &raw_line)?;
+        let message: Value = serde_json::from_str(&raw_line)?;
+
+        if message.get("error").is_some() {
+            if rpc_id_is(&message, RPC_THREAD_NAME_ID) {
+                continue;
+            }
+            turn_error = rpc_error_message(&message);
+            break;
+        }
+
+        if let Some(request_id) = server_request_id(&message) {
+            send_rpc(
+                &mut stdin,
+                &unsupported_server_request_response(request_id),
+                &log_file,
+            )?;
+            continue;
+        }
+
+        if rpc_id_is(&message, RPC_INITIALIZE_ID) {
+            send_rpc(&mut stdin, &thread_start_request(project), &log_file)?;
+            continue;
+        }
+
+        if rpc_id_is(&message, RPC_THREAD_START_ID) {
+            let id = codex_thread_id_from_app_server_message(&message)
+                .ok_or_else(|| AppError::Codex("thread/start response missing thread id".into()))?;
+            let started = if thread_id.as_deref() == Some(id.as_str()) {
+                let mut started = initial.clone();
+                started.codex_thread_id = Some(id.clone());
+                started
+            } else {
+                record_thread_id(project, initial, &id)?
+            };
+            thread_id = Some(id.clone());
+            send_rpc(
+                &mut stdin,
+                &thread_name_request(&id, &config.name),
+                &log_file,
+            )?;
+            send_rpc(
+                &mut stdin,
+                &turn_start_request(project, &id, &prompt),
+                &log_file,
+            )?;
+            write_json_pretty(&run_manifest_path(project, &initial.id), &started)?;
+            continue;
+        }
+
+        if thread_id.is_none() {
+            if let Some(id) = codex_thread_id_from_app_server_message(&message) {
+                thread_id = Some(id.clone());
+                let started = record_thread_id(project, initial, &id)?;
+                write_json_pretty(&run_manifest_path(project, &initial.id), &started)?;
+            }
+        }
+
+        if message.get("method").and_then(Value::as_str) == Some("turn/completed") {
+            if message.pointer("/params/threadId").and_then(Value::as_str) == thread_id.as_deref() {
+                match completed_turn_error(&message) {
+                    Some(error) => turn_error = Some(error),
+                    None => turn_completed = true,
+                }
+                break;
+            }
+        }
+    }
+
+    drop(stdin);
+    if turn_completed || turn_error.is_some() {
+        let _ = child.kill();
+    }
     let status = child.wait()?;
-    join_reader(stdout_handle)?;
     join_reader(stderr_handle)?;
 
     let mut finished = initial.clone();
     finished.completed_at = Some(Utc::now().to_rfc3339());
-    finished.codex_thread_id = thread_id
-        .lock()
-        .map_err(|_| AppError::Codex("thread id lock poisoned".into()))?
-        .clone();
+    finished.codex_thread_id = thread_id;
 
-    if status.success() {
+    if turn_completed {
         finished.status = RunStatus::Completed;
         write_json_pretty(&run_manifest_path(project, &initial.id), &finished)?;
         append_event(
@@ -344,9 +413,17 @@ fn execute_initial_analysis(
         Ok(())
     } else {
         finished.status = RunStatus::Failed;
-        finished.error = Some(format!("codex exited with {status}"));
+        finished.error = Some(
+            turn_error
+                .unwrap_or_else(|| format!("codex app-server exited before completion: {status}")),
+        );
         write_json_pretty(&run_manifest_path(project, &initial.id), &finished)?;
-        Err(AppError::Codex(format!("codex exited with {status}")))
+        Err(AppError::Codex(
+            finished
+                .error
+                .clone()
+                .unwrap_or_else(|| "codex app-server failed".into()),
+        ))
     }
 }
 
@@ -354,6 +431,182 @@ fn join_reader(handle: thread::JoinHandle<AppResult<()>>) -> AppResult<()> {
     handle
         .join()
         .map_err(|_| AppError::Codex("codex output reader panicked".into()))?
+}
+
+fn codex_app_server_args() -> Vec<String> {
+    vec!["app-server".into(), "--stdio".into()]
+}
+
+fn initialize_request() -> Value {
+    serde_json::json!({
+        "id": RPC_INITIALIZE_ID,
+        "method": "initialize",
+        "params": {
+            "clientInfo": {
+                "name": "gtm-agent",
+                "version": env!("CARGO_PKG_VERSION"),
+            },
+            "capabilities": {
+                "experimentalApi": true,
+            },
+        },
+    })
+}
+
+fn thread_start_request(project: &Path) -> Value {
+    serde_json::json!({
+        "id": RPC_THREAD_START_ID,
+        "method": "thread/start",
+        "params": {
+            "cwd": project.to_string_lossy(),
+            "ephemeral": false,
+            "approvalPolicy": "never",
+            "sandbox": "workspace-write",
+            "personality": "pragmatic",
+            "threadSource": "gtm-agent",
+            "sessionStartSource": "startup",
+        },
+    })
+}
+
+fn thread_name_request(thread_id: &str, project_name: &str) -> Value {
+    serde_json::json!({
+        "id": RPC_THREAD_NAME_ID,
+        "method": "thread/name/set",
+        "params": {
+            "threadId": thread_id,
+            "name": format!("{} GTM analysis", project_name),
+        },
+    })
+}
+
+fn turn_start_request(project: &Path, thread_id: &str, prompt: &str) -> Value {
+    serde_json::json!({
+        "id": RPC_TURN_START_ID,
+        "method": "turn/start",
+        "params": {
+            "threadId": thread_id,
+            "cwd": project.to_string_lossy(),
+            "approvalPolicy": "never",
+            "personality": "pragmatic",
+            "sandboxPolicy": {
+                "type": "workspaceWrite",
+                "writableRoots": [project.to_string_lossy()],
+                "networkAccess": true,
+                "excludeTmpdirEnvVar": false,
+                "excludeSlashTmp": false,
+            },
+            "input": [{
+                "type": "text",
+                "text": prompt,
+                "text_elements": [],
+            }],
+        },
+    })
+}
+
+fn send_rpc(stdin: &mut ChildStdin, request: &Value, log_file: &Arc<Mutex<File>>) -> AppResult<()> {
+    log_jsonl(
+        log_file,
+        &serde_json::json!({ "stream": "stdin", "message": request }),
+    )?;
+    writeln!(stdin, "{request}")?;
+    stdin.flush()?;
+    Ok(())
+}
+
+fn log_raw_line(log_file: &Arc<Mutex<File>>, line: &str) -> AppResult<()> {
+    writeln!(
+        log_file
+            .lock()
+            .map_err(|_| AppError::Codex("log lock poisoned".into()))?,
+        "{line}"
+    )?;
+    Ok(())
+}
+
+fn log_jsonl(log_file: &Arc<Mutex<File>>, value: &Value) -> AppResult<()> {
+    writeln!(
+        log_file
+            .lock()
+            .map_err(|_| AppError::Codex("log lock poisoned".into()))?,
+        "{value}"
+    )?;
+    Ok(())
+}
+
+fn record_thread_id(project: &Path, initial: &RunState, thread_id: &str) -> AppResult<RunState> {
+    let mut started = initial.clone();
+    started.codex_thread_id = Some(thread_id.to_string());
+    append_event(
+        project,
+        "codex.thread_started",
+        "Codex thread started",
+        serde_json::json!({
+            "runId": initial.id,
+            "codexThreadId": thread_id,
+        }),
+    )?;
+    Ok(started)
+}
+
+fn rpc_id_is(message: &Value, id: i64) -> bool {
+    message.get("id").and_then(Value::as_i64) == Some(id)
+}
+
+fn rpc_error_message(message: &Value) -> Option<String> {
+    message
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn server_request_id(message: &Value) -> Option<Value> {
+    if message.get("method").is_some()
+        && message.get("id").is_some()
+        && message.get("result").is_none()
+        && message.get("error").is_none()
+    {
+        return message.get("id").cloned();
+    }
+    None
+}
+
+fn unsupported_server_request_response(id: Value) -> Value {
+    serde_json::json!({
+        "id": id,
+        "error": {
+            "code": -32000,
+            "message": "GTM Agent does not handle interactive server requests during initial analysis",
+        },
+    })
+}
+
+fn codex_thread_id_from_app_server_message(message: &Value) -> Option<String> {
+    message
+        .pointer("/result/thread/id")
+        .or_else(|| message.pointer("/params/thread/id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn completed_turn_error(message: &Value) -> Option<String> {
+    let status = message
+        .pointer("/params/turn/status")
+        .and_then(Value::as_str);
+    match status {
+        Some("completed") => None,
+        Some("failed") | Some("interrupted") => Some(
+            message
+                .pointer("/params/turn/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or("Codex turn did not complete")
+                .to_string(),
+        ),
+        Some(other) => Some(format!("Codex turn ended with status {other}")),
+        None => Some("Codex turn completion was missing status".into()),
+    }
 }
 
 fn detect_codex_impl() -> CodexDetection {
@@ -385,18 +638,6 @@ fn detect_codex_impl() -> CodexDetection {
             error: Some("codex binary not found".into()),
         },
     }
-}
-
-fn codex_exec_args(project: &Path, prompt: &str) -> Vec<String> {
-    vec![
-        "-C".into(),
-        project.to_string_lossy().to_string(),
-        "exec".into(),
-        "--json".into(),
-        "--skip-git-repo-check".into(),
-        "--ignore-user-config".into(),
-        prompt.into(),
-    ]
 }
 
 fn codex_binary() -> Option<PathBuf> {
@@ -581,17 +822,6 @@ fn slugify(value: &str) -> String {
         .join("-")
 }
 
-fn codex_thread_id_from_line(line: &str) -> Option<String> {
-    let value: Value = serde_json::from_str(line).ok()?;
-    if value.get("type").and_then(Value::as_str) == Some("thread.started") {
-        return value
-            .get("thread_id")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-    }
-    None
-}
-
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> AppResult<T> {
     Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
 }
@@ -621,35 +851,97 @@ mod tests {
     }
 
     #[test]
-    fn parses_codex_thread_started_event() {
-        let line =
-            r#"{"type":"thread.started","thread_id":"019f2957-b734-7211-9bbc-f74f5980d6f3"}"#;
+    fn parses_app_server_thread_started_response() {
+        let message = serde_json::json!({
+            "id": RPC_THREAD_START_ID,
+            "result": {
+                "thread": {
+                    "id": "019f2957-b734-7211-9bbc-f74f5980d6f3"
+                }
+            }
+        });
         assert_eq!(
-            codex_thread_id_from_line(line).as_deref(),
+            codex_thread_id_from_app_server_message(&message).as_deref(),
             Some("019f2957-b734-7211-9bbc-f74f5980d6f3")
         );
     }
 
     #[test]
-    fn ignores_non_json_and_other_events() {
-        assert!(codex_thread_id_from_line("warning").is_none());
-        assert!(codex_thread_id_from_line(r#"{"type":"turn.started"}"#).is_none());
+    fn parses_app_server_thread_started_notification() {
+        let message = serde_json::json!({
+            "method": "thread/started",
+            "params": {
+                "thread": {
+                    "id": "019f2957-b734-7211-9bbc-f74f5980d6f3"
+                }
+            }
+        });
+        assert_eq!(
+            codex_thread_id_from_app_server_message(&message).as_deref(),
+            Some("019f2957-b734-7211-9bbc-f74f5980d6f3")
+        );
     }
 
     #[test]
-    fn builds_codex_exec_args_with_global_cd_before_exec() {
-        let args = codex_exec_args(Path::new("/tmp/project"), "analyze");
+    fn builds_codex_app_server_args() {
+        assert_eq!(codex_app_server_args(), vec!["app-server", "--stdio"]);
+    }
+
+    #[test]
+    fn builds_thread_start_request_for_persisted_workspace_thread() {
+        let request = thread_start_request(Path::new("/tmp/project"));
+        assert_eq!(request["method"], "thread/start");
+        assert_eq!(request["params"]["cwd"], "/tmp/project");
+        assert_eq!(request["params"]["ephemeral"], false);
+        assert_eq!(request["params"]["approvalPolicy"], "never");
+        assert_eq!(request["params"]["sandbox"], "workspace-write");
+        assert_eq!(request["params"]["threadSource"], "gtm-agent");
+    }
+
+    #[test]
+    fn builds_turn_start_request_with_workspace_write_access() {
+        let request = turn_start_request(Path::new("/tmp/project"), "thread_123", "analyze");
+        assert_eq!(request["method"], "turn/start");
+        assert_eq!(request["params"]["threadId"], "thread_123");
         assert_eq!(
-            args,
-            vec![
-                "-C",
-                "/tmp/project",
-                "exec",
-                "--json",
-                "--skip-git-repo-check",
-                "--ignore-user-config",
-                "analyze"
-            ]
+            request["params"]["sandboxPolicy"],
+            serde_json::json!({
+                "type": "workspaceWrite",
+                "writableRoots": ["/tmp/project"],
+                "networkAccess": true,
+                "excludeTmpdirEnvVar": false,
+                "excludeSlashTmp": false,
+            })
+        );
+        assert_eq!(request["params"]["input"][0]["text"], "analyze");
+    }
+
+    #[test]
+    fn detects_failed_completed_turns() {
+        let completed = serde_json::json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        });
+        assert!(completed_turn_error(&completed).is_none());
+
+        let failed = serde_json::json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "failed",
+                    "error": {
+                        "message": "model failed"
+                    }
+                }
+            }
+        });
+        assert_eq!(
+            completed_turn_error(&failed).as_deref(),
+            Some("model failed")
         );
     }
 
