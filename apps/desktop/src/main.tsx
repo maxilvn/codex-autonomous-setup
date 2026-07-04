@@ -130,11 +130,10 @@ function UrlIcon({ websiteUrl }: { websiteUrl: string }) {
           onError={() => setFailedFor(faviconUrl)}
         />
       ) : (
-        <>
-          <span />
-          <span />
-          <span />
-        </>
+        <svg viewBox="0 0 16 16" focusable="false">
+          <circle cx="8" cy="8" r="6" />
+          <path d="M2.5 8h11M8 2c1.7 1.6 2.5 3.6 2.5 6s-.8 4.4-2.5 6M8 2C6.3 3.6 5.5 5.6 5.5 8s.8 4.4 2.5 6" />
+        </svg>
       )}
     </span>
   );
