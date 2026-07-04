@@ -2,8 +2,77 @@
 
 ![Codex GitHub Harness preview](assets/social-preview.jpg)
 
-An opinionated open-source workflow harness that makes Codex behave like a
-disciplined GitHub coding agent.
+Codex GitHub Harness installs an `AGENTS.md` workflow and reusable Codex skills
+into a repository, so Codex handles coding tasks through clean branches,
+worktrees, verification, self-review, commits, pushes, and pull requests.
+
+## What This Is
+
+Codex is most useful when the operating rules are explicit. This project gives
+Codex those rules.
+
+Use it when you want Codex to behave less like a chat assistant editing files
+ad hoc, and more like a GitHub-first engineering agent whose work is isolated,
+checked, and reviewable.
+
+It is not a hosted service, a replacement for GitHub, or a bot that merges code
+for you. It is a small installer that copies workflow instructions, examples,
+and reusable skills into a repo.
+
+## What It Changes
+
+Without this harness, a Codex coding session can be ambiguous: should Codex edit
+the current checkout, create a branch, run tests, commit, push, or stop after a
+local patch?
+
+With this harness, the expected behavior is written down:
+
+- Use clean task branches and git worktrees.
+- Keep unrelated dirty work out of feature changes.
+- Verify changes before reporting done.
+- Run a post-implementation self-review loop.
+- Commit, push, and open a pull request when the task is intended for GitHub.
+- Report the final branch, worktree, commit, and PR state clearly.
+
+The goal is not to make Codex "magical." The goal is to make its behavior
+predictable, reviewable, and close to how a careful human engineer would work.
+
+## Before And After
+
+Before:
+
+```text
+You ask Codex to fix something.
+Codex may edit the current checkout directly unless you give more instructions.
+```
+
+After:
+
+```text
+You ask Codex to fix something.
+Codex creates a task branch and worktree, makes the fix there, runs checks,
+self-reviews the diff, commits, pushes, opens a PR, and reports the final state.
+```
+
+## Example Workflow
+
+Example task:
+
+```text
+Fix the failing login test.
+```
+
+With the full workflow, Codex should:
+
+1. Inspect the current branch, default branch, dirty files, worktrees, and
+   available test commands.
+2. Create a task branch such as `codex/fix-login-test` in a dedicated worktree.
+3. Make the smallest targeted code change that fixes the issue.
+4. Run the relevant tests, linter, type checker, or build.
+5. Review its own diff and remove debug code, dead code, unused imports, and
+   unnecessary abstractions.
+6. Commit the scoped changes, push the branch, and open a pull request.
+7. Report the branch, worktree, commit, PR URL, and checks that ran.
 
 ## Quick Start
 
@@ -18,7 +87,7 @@ npm install -g codex-github-harness
 codex-github-harness init
 ```
 
-The installer walks you through four questions and sets up everything:
+The installer walks you through four questions and sets up everything.
 
 ### 1. Workflow Mode
 
@@ -63,20 +132,16 @@ npx codex-github-harness init --dry-run
 npx codex-github-harness init /path/to/your/repo
 ```
 
-## What This Is
+## What Gets Installed
 
-Codex is most useful when the operating rules are explicit. This harness gives
-Codex a consistent workflow for repository work:
+The installer writes or updates a small set of plain-text files:
 
-- Use clean task branches and git worktrees.
-- Keep unrelated dirty work out of feature changes.
-- Verify changes before reporting done.
-- Run a post-implementation self-review loop.
-- Commit, push, and open a pull request when the task is intended for GitHub.
-- Report the final branch, worktree, commit, and PR state clearly.
-
-The goal is not to make Codex "magical." The goal is to make its behavior
-predictable, reviewable, and close to how a careful human engineer would work.
+- `AGENTS.md` -- the workflow rules Codex reads when it works in the target
+  repo.
+- `skills/` -- reusable Codex skills for PR workflow and post-change review.
+- `docs/` -- explanations of the workflow, customization options, and FAQ.
+- `examples/` -- minimal and full `AGENTS.md` variants for different autonomy
+  levels.
 
 ## Included Skills
 
@@ -87,9 +152,10 @@ The installer copies two reusable Codex skills:
 - **post-implementation-review** -- Self-review loop: diff check, cleanup,
   re-verify before reporting done. Catches bugs, dead code, and style drift.
 
-## Included Files
+## Repository Contents
 
-- `AGENTS.md` -- the full autonomous workflow instruction set.
+- `AGENTS.md` -- the full autonomous workflow instruction set used by this
+  repository.
 - `templates/` -- all files the installer copies into your repo.
 - `skills/pr-merge-cleanup/SKILL.md` -- reusable PR merge, branch deletion,
   commit, push, and PR workflow.
