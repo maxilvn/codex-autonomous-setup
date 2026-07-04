@@ -664,9 +664,6 @@ function XChannelSetupPanel({
 
       {isRunActive || activity.length > 0 ? (
         <div className="x-codex-card">
-          <div className="x-codex-head">
-            <strong>Codex</strong>
-          </div>
           <div className="x-codex-output">
             {activity.length ? (
               activity.slice(-6).map((item, index) => (

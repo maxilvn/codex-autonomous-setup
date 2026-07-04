@@ -846,8 +846,7 @@ code {
   padding-top: 12px;
 }
 
-.x-login-card strong,
-.x-codex-head strong {
+.x-login-card strong {
   color: #171717;
   font-size: 14px;
   line-height: 20px;
@@ -868,14 +867,6 @@ code {
   border-radius: 8px;
   padding: 12px 12px 10px;
   background: #ffffff;
-}
-
-.x-codex-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 6px;
 }
 
 .x-codex-output {
