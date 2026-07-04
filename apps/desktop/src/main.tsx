@@ -183,6 +183,7 @@ function ProjectView({ project }: { project: ProjectState }) {
   const [onboardingStep, setOnboardingStep] = React.useState<
     "analysis" | "channels"
   >("analysis");
+  const [isCompanyPanelOpen, setIsCompanyPanelOpen] = React.useState(true);
   const run = project.latestRun;
   const activity = project.runActivity.length
     ? project.runActivity
@@ -205,28 +206,48 @@ function ProjectView({ project }: { project: ProjectState }) {
   const channels = extractMarketingChannels(project.docs);
 
   React.useEffect(() => {
-    setOnboardingStep("analysis");
+    setOnboardingStep(isAnalysisComplete ? "channels" : "analysis");
     setSelectedDoc(null);
-  }, [project.config.id]);
+    setIsCompanyPanelOpen(!isAnalysisComplete);
+  }, [isAnalysisComplete, project.config.id]);
 
   React.useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
+    setIsCompanyPanelOpen(onboardingStep === "analysis");
   }, [onboardingStep]);
 
+  const showChannels = onboardingStep === "channels";
+  const workspaceClassName = [
+    "workspace",
+    showChannels ? "workspace-channels" : "workspace-analysis",
+    showChannels && isCompanyPanelOpen ? "workspace-company-open" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <section className={`workspace workspace-${onboardingStep}`}>
+    <section className={workspaceClassName}>
       <div className="analysis-grid">
         <aside className="panel documents-card" aria-label="Company context">
-          <div className="company-lockup">
+          <button
+            className="company-lockup"
+            type="button"
+            aria-expanded={isCompanyPanelOpen}
+            onClick={() => {
+              if (showChannels) {
+                setIsCompanyPanelOpen((open) => !open);
+              }
+            }}
+          >
             <UrlIcon websiteUrl={project.config.websiteUrl} />
             <div>
               <strong>{project.config.name}</strong>
             </div>
-          </div>
+          </button>
 
           <div
             className="documents-body"
-            aria-hidden={onboardingStep === "channels"}
+            aria-hidden={showChannels && !isCompanyPanelOpen}
           >
             <p className="product-description">{productDescription}</p>
 
@@ -280,10 +301,7 @@ function ProjectView({ project }: { project: ProjectState }) {
           </div>
         </aside>
 
-        <section
-          className="panel activity-card"
-          aria-hidden={onboardingStep === "channels"}
-        >
+        <section className="panel activity-card" aria-hidden={showChannels}>
           <div className="activity-head">
             <h2>Brand Analysis</h2>
           </div>
@@ -306,7 +324,10 @@ function ProjectView({ project }: { project: ProjectState }) {
             <div className="activity-actions">
               <button
                 type="button"
-                onClick={() => setOnboardingStep("channels")}
+                onClick={() => {
+                  setOnboardingStep("channels");
+                  setIsCompanyPanelOpen(false);
+                }}
               >
                 Continue
               </button>
@@ -316,7 +337,7 @@ function ProjectView({ project }: { project: ProjectState }) {
 
         <section
           className="channel-setup"
-          aria-hidden={onboardingStep !== "channels"}
+          aria-hidden={!showChannels}
           aria-label="Marketing channel setup"
         >
           <div className="channel-header">

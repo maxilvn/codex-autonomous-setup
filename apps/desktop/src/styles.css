@@ -285,8 +285,19 @@ input:focus {
   grid-template-columns: auto 1fr;
   align-items: center;
   gap: 10px;
+  width: 100%;
+  height: auto;
   min-height: 32px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0;
+  color: #171717;
+  background: transparent;
   text-align: left;
+}
+
+.company-lockup:hover {
+  background: transparent;
 }
 
 .company-lockup .url-icon {
@@ -341,6 +352,10 @@ input:focus {
 
 .workspace-channels .analysis-grid {
   grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.workspace-company-open .analysis-grid {
+  grid-template-columns: minmax(320px, 0.75fr) minmax(0, 2.25fr);
 }
 
 .label {
@@ -503,8 +518,20 @@ code {
   box-shadow: 0 8px 28px #0000000a;
 }
 
+.workspace-company-open .documents-card {
+  width: auto;
+  height: var(--analysis-card-height);
+  min-height: 320px;
+  padding: 20px 10px;
+  overflow: auto;
+}
+
 .workspace-channels .documents-card .company-lockup {
   padding: 0;
+}
+
+.workspace-company-open .documents-card .company-lockup {
+  padding: 0 10px;
 }
 
 .workspace-channels .documents-card .company-lockup strong {
@@ -516,6 +543,12 @@ code {
   white-space: nowrap;
 }
 
+.workspace-company-open .documents-card .company-lockup strong {
+  max-width: none;
+  font-size: 20px;
+  line-height: 32px;
+}
+
 .workspace-channels .documents-body {
   display: block;
   opacity: 0;
@@ -524,6 +557,13 @@ code {
   transition:
     opacity 180ms ease,
     transform 220ms ease;
+}
+
+.workspace-company-open .documents-body {
+  display: contents;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
 }
 
 .workspace-channels .activity-card {
