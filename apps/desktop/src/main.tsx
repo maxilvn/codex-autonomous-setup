@@ -201,15 +201,12 @@ function ProjectView({ project }: { project: ProjectState }) {
                     onClick={() => void api.openExternalUrl(competitor.url)}
                   >
                     <UrlIcon websiteUrl={competitor.url} />
-                    <span className="competitor-copy">
-                      <strong>{competitor.label}</strong>
-                      <small>{competitor.host}</small>
-                    </span>
+                    <span>{competitor.host}</span>
                   </button>
                 ))}
               </div>
             ) : (
-              <p className="empty-note">Competitors will appear here after analysis.</p>
+              <p className="empty-note">Verified competitor links will appear here after analysis.</p>
             )}
           </div>
         </aside>
@@ -291,7 +288,6 @@ type MarkdownBlock =
   | { type: "ordered-list"; items: string[] };
 
 type Competitor = {
-  label: string;
   host: string;
   url: string;
 };
@@ -332,40 +328,31 @@ function extractCompetitors(docs: ContextDoc[], ownHost: string) {
   const own = ownHost.toLowerCase();
   const markdownLink = /\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/g;
   const plainUrl = /https?:\/\/[^\s),]+/g;
-  const domain = /\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b/gi;
   const heading = /^###\s+(.+)$/gm;
   const examples = /examples? found:\s*([^\n]+)/gi;
 
-  function add(value: string, label?: string) {
+  function add(value: string) {
     const url = normalizeDisplayUrl(value);
     if (!url) return;
     const host = displayHost(url);
     const key = host.toLowerCase();
     if (!key || key.endsWith(".md") || key === own || key.endsWith(`.${own}`) || competitors.has(key)) return;
-    competitors.set(key, { label: label?.trim() || host, host, url });
+    competitors.set(key, { host, url });
   }
 
   function addName(value: string) {
     const name = cleanCompetitorName(value);
     if (!name || isGenericCompetitorCategory(name)) return;
     const knownUrl = knownCompetitorUrl(name);
-    const slug = slugDomain(name);
-    if (!knownUrl && slug.length < 3) return;
-    add(knownUrl || `https://${slug}.com`, name);
+    if (knownUrl) add(knownUrl);
   }
 
-  for (const match of doc.content.matchAll(markdownLink)) add(match[2], match[1]);
+  for (const match of doc.content.matchAll(markdownLink)) add(match[2]);
   for (const match of doc.content.matchAll(plainUrl)) add(match[0]);
-  for (const match of doc.content.matchAll(domain)) add(match[0]);
   for (const match of doc.content.matchAll(heading)) addName(match[1]);
   for (const match of doc.content.matchAll(examples)) {
     for (const item of match[1].split(/,|\band\b/gi)) {
-      const domainMatch = item.match(domain);
-      if (domainMatch) {
-        add(domainMatch[0], cleanCompetitorName(item.replace(domainMatch[0], "")));
-      } else {
-        addName(item);
-      }
+      addName(item);
     }
   }
 
@@ -404,14 +391,6 @@ function knownCompetitorUrl(value: string) {
     "aqua voice": "https://app.aquavoice.com",
   };
   return known[key] ?? null;
-}
-
-function slugDomain(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/&/g, "and")
-    .replace(/[^a-z0-9]+/g, "")
-    .trim();
 }
 
 function markdownBlocks(content: string): MarkdownBlock[] {

@@ -863,6 +863,8 @@ Rewrite exactly these files with concrete, useful findings:
 - competitor-analysis.md
 - brand-voice.md
 
+For `competitor-analysis.md`, include a short `## Verified competitor links` section near the top. Each item must be a Markdown link using the official company or product website, for example `- [Competitor Name](https://example.com)`. Only include links you have verified from the public web or the source website; omit uncertain competitors instead of guessing domains.
+
 Keep the files concise but specific enough that future GTM tasks can use them as source context. Include uncertainty where evidence is weak. Do not create outreach drafts, schedules, plugins, or extra strategy files. Do not post publicly or send messages.
 
 Append progress and completion events to `.gtm-agent/events.jsonl` as JSON lines with eventType, summary, payload, and createdAt.

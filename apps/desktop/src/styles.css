@@ -16,6 +16,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background: #ffffff;
+  overflow: hidden;
 }
 
 button,
@@ -63,7 +64,8 @@ input:focus {
 }
 
 .shell {
-  width: min(1120px, calc(100vw - 40px));
+  width: min(1480px, calc(100vw - 48px));
+  height: 100vh;
   margin: 0 auto;
   padding: 24px 0;
 }
@@ -266,7 +268,7 @@ input:focus {
 }
 
 .workspace {
-  --analysis-card-height: clamp(420px, calc(100vh - 180px), 640px);
+  --analysis-card-height: calc(100vh - 48px);
   display: grid;
   gap: 0;
 }
@@ -324,9 +326,10 @@ input:focus {
 
 .analysis-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 0.9fr) minmax(0, 2fr);
+  grid-template-columns: minmax(280px, 0.8fr) minmax(0, 2.2fr);
   gap: 18px;
   align-items: start;
+  height: var(--analysis-card-height);
 }
 
 .label {
@@ -432,9 +435,10 @@ code {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  height: auto;
+  height: var(--analysis-card-height);
   min-height: 320px;
   padding: 20px 10px;
+  overflow: auto;
 }
 
 .documents-card .company-lockup {
@@ -512,7 +516,7 @@ code {
 
 .competitors-section {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   margin-top: auto;
   padding: 0 10px;
 }
@@ -526,13 +530,13 @@ code {
   display: grid;
   grid-template-columns: auto 1fr;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  min-height: 36px;
+  min-height: 30px;
   height: auto;
   border: 0;
   border-radius: 8px;
-  padding: 6px 0;
+  padding: 4px 0;
   color: #171717;
   background: transparent;
   text-align: left;
@@ -545,39 +549,25 @@ code {
   background: #fafafa;
 }
 
-.competitor-copy {
-  display: grid;
-  min-width: 0;
-}
-
-.competitor-copy strong {
+.competitor-row span {
   overflow: hidden;
   color: #171717;
-  font-size: 14px;
-  line-height: 20px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.competitor-copy small {
-  overflow: hidden;
-  color: #8f8f8f;
-  font-size: 12px;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .competitor-row .url-icon {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
 }
 
 .competitor-row .url-icon img {
-  width: 20px;
-  height: 20px;
-  border-radius: 5px;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
 }
 
 .empty-note {
