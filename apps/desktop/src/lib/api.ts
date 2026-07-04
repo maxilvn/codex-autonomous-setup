@@ -7,7 +7,9 @@ function hasTauriBridge() {
 
 function call<T>(command: string, args?: Record<string, unknown>) {
   if (!hasTauriBridge()) {
-    return Promise.reject(new Error("Tauri backend unavailable in browser preview."));
+    return Promise.reject(
+      new Error("Tauri backend unavailable in browser preview."),
+    );
   }
   return invoke<T>(command, args);
 }
@@ -45,6 +47,9 @@ export const api = {
   },
   runInitialAnalysis(projectPath: string) {
     return call<RunState>("run_initial_analysis", { projectPath });
+  },
+  configureChannel(projectPath: string, channelId: string) {
+    return call<ProjectState>("configure_channel", { projectPath, channelId });
   },
   openProjectInCodex(projectPath: string) {
     return call<void>("open_project_in_codex", { projectPath });

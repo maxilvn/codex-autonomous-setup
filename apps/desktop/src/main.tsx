@@ -2,7 +2,12 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./lib/api";
-import type { AgentProviderStatus, ContextDoc, ProjectState } from "./lib/types";
+import type {
+  AgentProviderStatus,
+  ChannelSetup,
+  ContextDoc,
+  ProjectState,
+} from "./lib/types";
 import "./styles.css";
 
 const logoBlack = new URL(
@@ -125,7 +130,7 @@ function App() {
           </div>
         </section>
       ) : project ? (
-        <ProjectView project={project} />
+        <ProjectView project={project} onProjectUpdate={setProject} />
       ) : null}
     </main>
   );
@@ -178,12 +183,25 @@ function AgentBadge({ provider }: { provider: AgentProviderStatus | null | undef
   );
 }
 
-function ProjectView({ project }: { project: ProjectState }) {
+function ProjectView({
+  project,
+  onProjectUpdate,
+}: {
+  project: ProjectState;
+  onProjectUpdate: (project: ProjectState) => void;
+}) {
   const [selectedDoc, setSelectedDoc] = React.useState<ContextDoc | null>(null);
   const [onboardingStep, setOnboardingStep] = React.useState<
-    "analysis" | "channels"
+    "analysis" | "channels" | "dashboard"
   >("analysis");
   const [isCompanyPanelOpen, setIsCompanyPanelOpen] = React.useState(true);
+  const [activeChannelId, setActiveChannelId] = React.useState<string | null>(
+    null,
+  );
+  const [configuringChannelId, setConfiguringChannelId] = React.useState<
+    string | null
+  >(null);
+  const [channelError, setChannelError] = React.useState<string | null>(null);
   const run = project.latestRun;
   const activity = project.runActivity.length
     ? project.runActivity
@@ -204,6 +222,37 @@ function ProjectView({ project }: { project: ProjectState }) {
   const productDescription = extractProductDescription(project.docs);
   const competitors = extractCompetitors(project.docs, host);
   const channels = extractMarketingChannels(project.docs);
+  const channelSetups = new Map(
+    project.channelSetups.map((setup) => [setup.id, setup]),
+  );
+  const activeChannel = channels.find(
+    (channel) => channel.id === activeChannelId,
+  );
+  const activeChannelSetup = activeChannelId
+    ? (channelSetups.get(activeChannelId) ?? null)
+    : null;
+  const showChannelDetail = activeChannel?.id === "x";
+  const hasConfiguredChannel = project.channelSetups.some(
+    (setup) => setup.status === "ready",
+  );
+
+  async function configureChannel(channelId: string) {
+    setActiveChannelId(channelId);
+    setChannelError(null);
+    if (channelId !== "x") {
+      setChannelError(`${channelName(channelId)} setup is coming next.`);
+      return;
+    }
+    setConfiguringChannelId(channelId);
+    try {
+      const next = await api.configureChannel(project.config.path, channelId);
+      onProjectUpdate(next);
+    } catch (err) {
+      setChannelError(String(err));
+    } finally {
+      setConfiguringChannelId(null);
+    }
+  }
 
   React.useEffect(() => {
     setOnboardingStep(isAnalysisComplete ? "channels" : "analysis");
@@ -216,10 +265,15 @@ function ProjectView({ project }: { project: ProjectState }) {
   }, [onboardingStep]);
 
   const showChannels = onboardingStep === "channels";
+  const showDashboard = onboardingStep === "dashboard";
   const workspaceClassName = [
     "workspace",
-    showChannels ? "workspace-channels" : "workspace-analysis",
-    showChannels && isCompanyPanelOpen ? "workspace-company-open" : "",
+    showChannels || showDashboard ? "workspace-channels" : "workspace-analysis",
+    showDashboard ? "workspace-dashboard" : "",
+    showChannels || showDashboard ? "workspace-distribution" : "",
+    (showChannels || showDashboard) && isCompanyPanelOpen
+      ? "workspace-company-open"
+      : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -336,35 +390,125 @@ function ProjectView({ project }: { project: ProjectState }) {
 
         <section
           className="channel-setup"
-          aria-hidden={!showChannels}
+          aria-hidden={!showChannels || showDashboard}
           aria-label="Marketing channel setup"
         >
           <div className="channel-header">
-            <p className="eyebrow">Distribution setup</p>
-            <h2>Recommended marketing channels</h2>
+            <p className="eyebrow">
+              {showChannelDetail ? "X setup" : "Distribution setup"}
+            </p>
+            <h2>
+              {showChannelDetail
+                ? "Configure X outreach"
+                : "Recommended marketing channels"}
+            </h2>
             <p>
-              Start with the channels that matched the strategy analysis.
-              Connect or configure each one before moving into recurring GTM
-              work.
+              {showChannelDetail
+                ? "Prepare draft-first X outreach through the existing Chrome session. Codex will find posts, create reply drafts, and wait for approval."
+                : "Start with the channels that matched the strategy analysis. Connect or configure each one before moving into recurring GTM work."}
             </p>
           </div>
 
-          <div className="channel-list">
-            {channels.map((channel) => (
-              <article className="channel-card" key={channel.id}>
-                <UrlIcon websiteUrl={channel.faviconUrl} />
-                <div>
-                  <div className="channel-card-head">
-                    <h3>{channel.name}</h3>
-                    <span>{channel.priority}</span>
+          {showChannelDetail ? null : (
+            <div className="channel-list">
+              {channels.map((channel) => (
+                <article className="channel-card" key={channel.id}>
+                  <UrlIcon websiteUrl={channel.faviconUrl} />
+                  <div>
+                    <div className="channel-card-head">
+                      <h3>{channel.name}</h3>
+                      <span>
+                        {channelSetups.get(channel.id)?.status === "ready"
+                          ? "Ready"
+                          : channel.priority}
+                      </span>
+                    </div>
+                    <p>{channel.reason}</p>
                   </div>
-                  <p>{channel.reason}</p>
-                </div>
-                <button className="secondary" type="button">
-                  Configure
-                </button>
-              </article>
-            ))}
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => void configureChannel(channel.id)}
+                    disabled={configuringChannelId === channel.id}
+                  >
+                    {configuringChannelId === channel.id
+                      ? "Setting up..."
+                      : channelSetups.get(channel.id)?.status === "ready"
+                        ? "Open"
+                        : "Configure"}
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
+
+          {channelError ? (
+            <p className="channel-error">{channelError}</p>
+          ) : null}
+
+          {activeChannel?.id === "x" ? (
+            <XChannelSetupPanel
+              channel={activeChannel}
+              setup={activeChannelSetup}
+              isConfiguring={configuringChannelId === activeChannel.id}
+            />
+          ) : null}
+
+          <div
+            className={
+              showChannelDetail
+                ? "channel-actions channel-actions-detail"
+                : "channel-actions"
+            }
+          >
+            {showChannelDetail ? (
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => setActiveChannelId(null)}
+              >
+                Back
+              </button>
+            ) : (
+              <p>
+                {hasConfiguredChannel
+                  ? "At least one distribution channel is ready."
+                  : "Configure one channel to continue."}
+              </p>
+            )}
+            <button
+              type="button"
+              disabled={!hasConfiguredChannel}
+              onClick={() => setOnboardingStep("dashboard")}
+            >
+              Continue
+            </button>
+          </div>
+        </section>
+
+        <section
+          className="dashboard-preview"
+          aria-hidden={!showDashboard}
+          aria-label="GTM dashboard"
+        >
+          <div className="channel-header">
+            <p className="eyebrow">Dashboard</p>
+            <h2>Daily GTM workspace</h2>
+            <p>
+              Your configured channels will turn into recurring research,
+              drafts, approvals, and browser-assisted posting runs.
+            </p>
+          </div>
+
+          <div className="dashboard-status-list">
+            {project.channelSetups
+              .filter((setup) => setup.status === "ready")
+              .map((setup) => (
+                <article className="dashboard-status-card" key={setup.id}>
+                  <strong>{setup.name}</strong>
+                  <span>Ready for draft-first runs</span>
+                </article>
+              ))}
           </div>
         </section>
       </div>
@@ -393,6 +537,86 @@ function ProjectView({ project }: { project: ProjectState }) {
         </div>
       ) : null}
     </section>
+  );
+}
+
+function XChannelSetupPanel({
+  channel,
+  setup,
+  isConfiguring,
+}: {
+  channel: MarketingChannel;
+  setup: ChannelSetup | null;
+  isConfiguring: boolean;
+}) {
+  const isReady = setup?.status === "ready";
+  return (
+    <article className="x-setup-panel" aria-label="X channel setup">
+      <div className="x-setup-head">
+        <UrlIcon websiteUrl={channel.faviconUrl} />
+        <div>
+          <p className="eyebrow">X setup</p>
+          <h3>Draft-first outreach through Chrome</h3>
+        </div>
+        <span>
+          {isReady ? "Ready" : isConfiguring ? "Creating" : "Not set up"}
+        </span>
+      </div>
+
+      <div className="x-setup-steps">
+        <SetupStep
+          title="Use existing Chrome login"
+          description="Codex will use the signed-in browser session instead of the paid X API."
+          status={isReady ? "Ready" : "Next"}
+        />
+        <SetupStep
+          title="Learn account voice"
+          description="Profile, recent posts, replies, strong examples, and avoid patterns become channel memory."
+          status={isReady ? "Ready" : "Planned"}
+        />
+        <SetupStep
+          title="Create daily draft queue"
+          description="Codex stores each source post link with a matching reply draft, risk notes, and review status."
+          status={isReady ? "Ready" : "Planned"}
+        />
+        <SetupStep
+          title="Prepare reply in Chrome"
+          description="Approved drafts can later open the source post and paste the reply so the user only has to review and send."
+          status={isReady ? "Next" : "Planned"}
+        />
+      </div>
+
+      {isReady ? (
+        <div className="x-setup-files">
+          <p className="eyebrow">Created channel files</p>
+          <div>
+            {setup.files.map((file) => (
+              <code key={file}>{file}</code>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function SetupStep({
+  title,
+  description,
+  status,
+}: {
+  title: string;
+  description: string;
+  status: string;
+}) {
+  return (
+    <div className="x-setup-step">
+      <div>
+        <strong>{title}</strong>
+        <p>{description}</p>
+      </div>
+      <span>{status}</span>
+    </div>
   );
 }
 
@@ -453,6 +677,13 @@ type MarketingChannel = {
   priority: "Recommended" | "Optional" | "Not now";
   reason: string;
 };
+
+function channelName(channelId: string) {
+  return (
+    SUPPORTED_CHANNELS.find((channel) => channel.id === channelId)?.name ??
+    channelId
+  );
+}
 
 const SUPPORTED_CHANNELS: MarketingChannel[] = [
   {

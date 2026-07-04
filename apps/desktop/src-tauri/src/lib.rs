@@ -101,6 +101,7 @@ struct ProjectState {
     config: ProjectConfig,
     agent_provider: AgentProviderStatus,
     docs: Vec<ContextDoc>,
+    channel_setups: Vec<ChannelSetup>,
     latest_run: Option<RunState>,
     run_activity: Vec<RunActivity>,
 }
@@ -140,6 +141,23 @@ struct RunActivity {
     kind: String,
     title: String,
     message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChannelSetup {
+    id: String,
+    name: String,
+    status: ChannelSetupStatus,
+    path: String,
+    files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ChannelSetupStatus {
+    NotConfigured,
+    Ready,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -182,6 +200,7 @@ pub fn run() {
             load_last_project,
             load_project,
             run_initial_analysis,
+            configure_channel,
             open_project_in_codex,
             open_external_url
         ])
@@ -264,9 +283,31 @@ fn load_project(project_path: String) -> AppResult<ProjectState> {
         config,
         agent_provider: selected_provider_status()?,
         docs: read_docs(&path)?,
+        channel_setups: read_channel_setups(&path),
         latest_run,
         run_activity,
     })
+}
+
+#[tauri::command]
+fn configure_channel(project_path: String, channel_id: String) -> AppResult<ProjectState> {
+    let path = PathBuf::from(project_path);
+    if channel_id != "x" {
+        return Err(AppError::Invalid(format!(
+            "{channel_id} setup is not implemented yet"
+        )));
+    }
+    write_x_channel_setup(&path)?;
+    append_event(
+        &path,
+        "channel.configured",
+        "X channel setup initialized",
+        serde_json::json!({
+            "channelId": "x",
+            "mode": "chrome_session_draft_first",
+        }),
+    )?;
+    load_project(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -842,6 +883,86 @@ fn read_docs(project_path: &Path) -> AppResult<Vec<ContextDoc>> {
             })
         })
         .collect()
+}
+
+fn read_channel_setups(project_path: &Path) -> Vec<ChannelSetup> {
+    let x_path = project_path.join(".gtm-agent/channels/x");
+    if !x_path.exists() {
+        return vec![ChannelSetup {
+            id: "x".into(),
+            name: "X".into(),
+            status: ChannelSetupStatus::NotConfigured,
+            path: x_path.to_string_lossy().to_string(),
+            files: Vec::new(),
+        }];
+    }
+
+    let files = [
+        "profile.md",
+        "rules.md",
+        "examples.md",
+        "searches.md",
+        "opportunities.jsonl",
+        "runs.jsonl",
+        "drafts/README.md",
+        "drafts/schema.md",
+    ]
+    .iter()
+    .filter(|file_name| x_path.join(file_name).exists())
+    .map(|file_name| (*file_name).to_string())
+    .collect::<Vec<_>>();
+
+    vec![ChannelSetup {
+        id: "x".into(),
+        name: "X".into(),
+        status: ChannelSetupStatus::Ready,
+        path: x_path.to_string_lossy().to_string(),
+        files,
+    }]
+}
+
+fn write_x_channel_setup(project_path: &Path) -> AppResult<()> {
+    let channel_path = project_path.join(".gtm-agent/channels/x");
+    fs::create_dir_all(channel_path.join("drafts"))?;
+
+    write_if_missing(
+        &channel_path.join("profile.md"),
+        "# X Channel Profile\n\n## Connection\n\n- Mode: Existing Chrome session\n- Posting: Browser-assisted after explicit user approval\n- API: Not required for MVP\n\n## Account voice to learn\n\nCodex should learn this from the signed-in X account before recurring runs:\n\n- Profile bio and positioning\n- Recent posts and replies\n- Topics the account naturally discusses\n- Phrases, pacing, and formatting that sound native to the account\n- Posts or replies the user marks as strong examples\n\n## Operating posture\n\nUse global brand voice as the base, then adapt it for X: concise, founder-led, specific, and conversational. Avoid generic launch hype and avoid posting without review.\n",
+    )?;
+    write_if_missing(
+        &channel_path.join("rules.md"),
+        "# X Channel Rules\n\n## Approval\n\n- Manual approval is required before every post or reply.\n- Codex may search, rank opportunities, and draft replies.\n- Codex may open Chrome and prepare a post only after the user confirms.\n- The final public action must be visible to the user before submission.\n\n## Draft standards\n\n- Lead with the problem or observation, not a pitch.\n- Prefer useful replies to cold promotion.\n- Use product mentions only when the thread context makes them natural.\n- Do not make unsupported claims beyond the brand source documents.\n- Save strong approved posts back to `examples.md`.\n\n## Avoid\n\n- Spammy reply chains\n- Generic AI/productivity claims\n- Engagement bait\n- Posting into threads where the product is not relevant\n",
+    )?;
+    write_if_missing(
+        &channel_path.join("examples.md"),
+        "# X Examples\n\nUse this file as the channel-specific memory for what good looks like.\n\n## Strong examples\n\n_Add approved posts and replies here after the user marks them as good._\n\n## Avoid examples\n\n_Add drafts or posts that felt too salesy, off-tone, or low-signal._\n",
+    )?;
+    write_if_missing(
+        &channel_path.join("searches.md"),
+        "# X Search Strategy\n\n## Inputs\n\nUse `marketing-strategy.md`, `brand-voice.md`, competitor names, ICP language, and pain-point terms from the brand analysis.\n\n## Opportunity types\n\n- Buyer pain posts\n- Founder/operator discussions\n- Competitor or alternative mentions\n- Category education threads\n- Launch or workflow discussions where a helpful reply fits\n\n## Daily run output\n\nFor every opportunity, capture the source URL, why it matters, suggested angle, draft reply, and review status before any browser-assisted posting.\n",
+    )?;
+    write_if_missing(
+        &channel_path.join("drafts/schema.md"),
+        "# X Draft Format\n\nEach draft should include:\n\n- Source post URL\n- Opportunity summary\n- Why this is relevant\n- Suggested reply draft\n- Risk notes\n- Status: `drafted`, `approved`, `posted`, or `skipped`\n\nApproved drafts can later be opened in Chrome, pasted into the reply field, and left for the user to send. A future version may submit after an explicit in-app confirmation.\n",
+    )?;
+    write_if_missing(&channel_path.join("opportunities.jsonl"), "")?;
+    write_if_missing(&channel_path.join("runs.jsonl"), "")?;
+    write_if_missing(
+        &channel_path.join("drafts/README.md"),
+        "# X Draft Queue\n\nDrafts created by daily X runs should live here until they are approved, edited, skipped, or posted through Chrome.\n",
+    )?;
+    Ok(())
+}
+
+fn write_if_missing(path: &Path, content: &str) -> AppResult<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, content)?;
+    Ok(())
 }
 
 fn latest_run(project_path: &Path) -> AppResult<Option<RunState>> {
@@ -1618,6 +1739,34 @@ mod tests {
             assert!(!content.contains("Source URL"));
         }
         assert!(project_path.join(".gtm-agent/events.jsonl").exists());
+
+        fs::remove_dir_all(project_path).unwrap();
+    }
+
+    #[test]
+    fn writes_x_channel_setup_files() {
+        let project_path =
+            std::env::temp_dir().join(format!("gtm-agent-x-test-{}", Uuid::new_v4().simple()));
+
+        write_x_channel_setup(&project_path).unwrap();
+
+        let channel_path = project_path.join(".gtm-agent/channels/x");
+        for file_name in [
+            "profile.md",
+            "rules.md",
+            "examples.md",
+            "searches.md",
+            "opportunities.jsonl",
+            "runs.jsonl",
+            "drafts/README.md",
+            "drafts/schema.md",
+        ] {
+            assert!(channel_path.join(file_name).exists());
+        }
+        let setups = read_channel_setups(&project_path);
+        assert_eq!(setups.len(), 1);
+        assert_eq!(setups[0].status, ChannelSetupStatus::Ready);
+        assert!(setups[0].files.contains(&"drafts/schema.md".into()));
 
         fs::remove_dir_all(project_path).unwrap();
     }

@@ -45,10 +45,19 @@ export interface RunActivity {
   message: string;
 }
 
+export interface ChannelSetup {
+  id: string;
+  name: string;
+  status: "not_configured" | "ready";
+  path: string;
+  files: string[];
+}
+
 export interface ProjectState {
   config: ProjectConfig;
   agentProvider: AgentProviderStatus;
   docs: ContextDoc[];
+  channelSetups: ChannelSetup[];
   latestRun?: RunState | null;
   runActivity: RunActivity[];
 }
