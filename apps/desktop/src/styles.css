@@ -863,11 +863,11 @@ code {
 
 .x-codex-card {
   display: grid;
-  gap: 8px;
+  gap: 0;
   border: 1px solid #eaeaea;
   border-radius: 8px;
-  padding: 12px;
-  background: #fafafa;
+  padding: 12px 12px 10px;
+  background: #ffffff;
 }
 
 .x-codex-head {
@@ -875,25 +875,36 @@ code {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-}
-
-.x-codex-head span {
-  color: #666666;
-  font-size: 12px;
-  line-height: 16px;
-  font-weight: 550;
+  padding-bottom: 6px;
 }
 
 .x-codex-output {
   display: grid;
-  gap: 6px;
+  max-height: 148px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
 }
 
-.x-codex-output p {
+.x-codex-item {
+  border-top: 1px solid #f2f2f2;
+  padding: 10px 0;
+}
+
+.x-codex-item:first-child {
+  border-top: 0;
+}
+
+.x-codex-item p {
   margin: 0;
   color: #666666;
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.x-codex-output .analyzing-shimmer {
+  margin-top: 8px;
+  padding-top: 2px;
 }
 
 .x-setup-steps {

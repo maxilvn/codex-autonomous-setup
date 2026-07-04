@@ -1517,10 +1517,11 @@ Brand: {name}
 Goal:
 Configure the X channel for draft-first outreach. Do not post, like, follow, send, or publicly interact. Only inspect the logged-in account and write local channel context files.
 
-First verify whether Chrome is signed into X:
-- Open X/Twitter in Chrome.
-- If no account is signed in, stop after writing `.gtm-agent/channels/x/status.json` with `loginStatus: "needs_login"`, `analysisStatus: "not_started"`, and no account label.
-- If an account is signed in, identify the visible handle/name from the profile or account switcher.
+First action, before reading memory, browsing the web, or reviewing local brand files:
+- Use Chrome to open or inspect `https://x.com/home`.
+- Verify whether the current Chrome profile is signed into X.
+- If no account is signed in, immediately write `.gtm-agent/channels/x/status.json` with `loginStatus: "needs_login"`, `analysisStatus: "not_started"`, `accountLabel: null`, and stop.
+- If an account is signed in, identify the visible handle/name from the profile or account switcher, then continue with the account analysis.
 
 Then rewrite only these files:
 - `.gtm-agent/channels/x/profile.md`

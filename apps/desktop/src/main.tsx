@@ -658,7 +658,7 @@ function XChannelSetupPanel({
           onClick={onVerify}
           disabled={isRunActive || isConfiguring}
         >
-          {isRunActive ? "Checking..." : "Verify in Chrome"}
+          {isRunActive ? "Analyzing account..." : "Verify in Chrome"}
         </button>
       </div>
 
@@ -666,21 +666,28 @@ function XChannelSetupPanel({
         <div className="x-codex-card">
           <div className="x-codex-head">
             <strong>Codex</strong>
-            <span>{isRunActive ? "Analyzing..." : "Latest output"}</span>
           </div>
           <div className="x-codex-output">
             {activity.length ? (
-              activity
-                .slice(-3)
-                .map((item, index) => (
-                  <p key={`${item.title}-${index}`}>{item.message}</p>
-                ))
+              activity.slice(-6).map((item, index) => (
+                <article
+                  className="x-codex-item"
+                  key={`${item.title}-${index}`}
+                >
+                  <p>{item.message}</p>
+                </article>
+              ))
             ) : (
-              <p>
-                Codex will inspect the signed-in X account in Chrome and write
-                profile, rules, examples, and voice.
-              </p>
+              <article className="x-codex-item">
+                <p>
+                  Codex will inspect the signed-in X account in Chrome and write
+                  profile, rules, examples, and voice.
+                </p>
+              </article>
             )}
+            {isRunActive ? (
+              <div className="analyzing-shimmer">Analyzing...</div>
+            ) : null}
           </div>
         </div>
       ) : null}
