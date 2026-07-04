@@ -522,7 +522,7 @@ code {
   width: auto;
   height: var(--analysis-card-height);
   min-height: 320px;
-  padding: 6px 10px 20px;
+  padding: 14px 10px 20px;
   overflow: auto;
 }
 
@@ -539,6 +539,11 @@ code {
   grid-template-columns: 34px auto;
   justify-content: start;
   gap: 6px;
+  padding: 0 6px;
+}
+
+.workspace-company-open .product-description,
+.workspace-company-open .documents-section {
   padding: 0 6px;
 }
 
