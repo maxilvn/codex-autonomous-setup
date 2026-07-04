@@ -86,7 +86,7 @@ input:focus {
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   color: #171717;
   font-size: 14px;
   font-weight: 600;
@@ -95,19 +95,18 @@ input:focus {
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
-  border: 1px solid #eaeaea;
-  border-radius: 6px;
-  background: #ffffff;
-  box-shadow: 0 1px 2px #0000000d;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: #000000;
   overflow: hidden;
 }
 
 .brand-mark img {
-  width: 17px;
-  height: 17px;
-  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .panel {
@@ -432,15 +431,11 @@ code {
 }
 
 .product-description {
-  display: -webkit-box;
   margin: 0;
   padding: 0 10px;
-  overflow: hidden;
   color: #4d4d4d;
   font-size: 15px;
   line-height: 24px;
-  -webkit-line-clamp: 7;
-  -webkit-box-orient: vertical;
 }
 
 .documents-section {
