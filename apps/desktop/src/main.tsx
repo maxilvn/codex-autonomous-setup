@@ -12,6 +12,7 @@ function App() {
   const [project, setProject] = React.useState<ProjectState | null>(null);
   const [websiteUrl, setWebsiteUrl] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const [restoring, setRestoring] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
   const refreshProject = React.useCallback(async () => {
@@ -23,6 +24,18 @@ function App() {
     api.detectCodex().then(setCodex).catch((err) => {
       setCodex({ available: false, error: String(err) });
     });
+    let cancelled = false;
+    api.loadLastProject()
+      .then((lastProject) => {
+        if (!cancelled && lastProject) setProject(lastProject);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setRestoring(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   React.useEffect(() => {
@@ -48,8 +61,10 @@ function App() {
     try {
       const next = await api.createProject(websiteUrl);
       setProject(next);
-      await api.runInitialAnalysis(next.config.path);
-      setProject(await api.loadProject(next.config.path));
+      if (shouldRunInitialAnalysis(next)) {
+        await api.runInitialAnalysis(next.config.path);
+        setProject(await api.loadProject(next.config.path));
+      }
     } catch (err) {
       setError(String(err));
     } finally {
@@ -71,10 +86,10 @@ function App() {
 
       {error ? <div className="error">{error}</div> : null}
 
-      {!project ? (
+      {!project && !restoring ? (
         <section className="onboarding">
           <div className="onboarding-copy">
-            <p className="eyebrow">Codex workspace</p>
+            <p className="eyebrow">Brand workspace</p>
             <h1>Website analysis</h1>
           </div>
           <div className="url-bar">
@@ -93,9 +108,9 @@ function App() {
             </button>
           </div>
         </section>
-      ) : (
+      ) : project ? (
         <ProjectView project={project} />
-      )}
+      ) : null}
     </main>
   );
 }
@@ -147,7 +162,7 @@ function ProjectView({ project }: { project: ProjectState }) {
   const run = project.latestRun;
   const activity = project.runActivity.length
     ? project.runActivity
-    : [{ kind: "idle", title: "Waiting", message: "Codex text output will appear here." }];
+    : [{ kind: "idle", title: "Waiting", message: "Analysis updates will appear here." }];
   const isRunning = run?.status === "running";
   const host = displayHost(project.config.websiteUrl);
   const productDescription = extractProductDescription(project.docs);
@@ -221,8 +236,8 @@ function ProjectView({ project }: { project: ProjectState }) {
                 <p>{item.message}</p>
               </article>
             ))}
+            {isRunning ? <div className="analyzing-shimmer">Analyzing...</div> : null}
           </div>
-          {isRunning ? <div className="analyzing-shimmer">Analyzing...</div> : null}
           {run?.error ? <p className="run-error">{run.error}</p> : null}
         </section>
       </div>
@@ -295,6 +310,12 @@ type Competitor = {
 function docByKey(docs: ContextDoc[], key: string) {
   const fileKey = key.replaceAll("_", "-");
   return docs.find((doc) => doc.key === key || doc.fileName.includes(fileKey));
+}
+
+function shouldRunInitialAnalysis(project: ProjectState) {
+  if (!project.latestRun) return true;
+  if (project.latestRun.status === "failed") return true;
+  return project.docs.some((doc) => doc.content.includes("_Status: pending Codex analysis_"));
 }
 
 function extractProductDescription(docs: ContextDoc[]) {

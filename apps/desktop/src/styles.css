@@ -64,7 +64,7 @@ input:focus {
 }
 
 .shell {
-  width: min(1480px, calc(100vw - 48px));
+  width: min(1680px, calc(100vw - 72px));
   height: 100vh;
   margin: 0 auto;
   padding: 24px 0;
@@ -326,7 +326,7 @@ input:focus {
 
 .analysis-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 0.8fr) minmax(0, 2.2fr);
+  grid-template-columns: minmax(320px, 0.75fr) minmax(0, 2.25fr);
   gap: 18px;
   align-items: start;
   height: var(--analysis-card-height);
@@ -393,6 +393,7 @@ input:focus {
 .analyzing-shimmer {
   position: relative;
   width: max-content;
+  margin-top: 12px;
   overflow: hidden;
   color: #8f8f8f;
   font-size: 13px;
@@ -517,7 +518,7 @@ code {
 .competitors-section {
   display: grid;
   gap: 8px;
-  margin-top: auto;
+  margin-top: 4px;
   padding: 0 10px;
 }
 

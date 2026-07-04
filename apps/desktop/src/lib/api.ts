@@ -30,6 +30,12 @@ export const api = {
       request: { websiteUrl },
     });
   },
+  loadLastProject() {
+    if (!hasTauriBridge()) {
+      return Promise.resolve<ProjectState | null>(null);
+    }
+    return call<ProjectState | null>("load_last_project");
+  },
   loadProject(projectPath: string) {
     return call<ProjectState>("load_project", { projectPath });
   },

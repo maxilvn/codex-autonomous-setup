@@ -52,6 +52,12 @@ struct CreateProjectRequest {
     website_url: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppSettings {
+    last_project_path: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProjectConfig {
@@ -141,6 +147,7 @@ pub fn run() {
             detect_codex,
             default_project_path,
             create_project,
+            load_last_project,
             load_project,
             run_initial_analysis,
             open_project_in_codex,
@@ -158,10 +165,7 @@ fn detect_codex() -> CodexDetection {
 #[tauri::command]
 fn default_project_path(website_url: String) -> AppResult<String> {
     let url = normalize_url(&website_url)?;
-    let home =
-        dirs::home_dir().ok_or_else(|| AppError::Invalid("cannot locate home directory".into()))?;
-    Ok(home
-        .join("GTM Agent Projects")
+    Ok(projects_root()?
         .join(slugify(&project_name_from_url(&url)))
         .to_string_lossy()
         .to_string())
@@ -170,8 +174,15 @@ fn default_project_path(website_url: String) -> AppResult<String> {
 #[tauri::command]
 fn create_project(request: CreateProjectRequest) -> AppResult<ProjectState> {
     let website_url = normalize_url(&request.website_url)?;
-    let name = project_name_from_url(&website_url);
     let project_path = PathBuf::from(default_project_path(website_url.clone())?);
+    let config_path = project_path.join(".gtm-agent/config.json");
+
+    if config_path.exists() {
+        save_last_project_path(&project_path)?;
+        return load_project(project_path.to_string_lossy().to_string());
+    }
+
+    let name = project_name_from_url(&website_url);
     fs::create_dir_all(project_path.join(".gtm-agent/runs"))?;
 
     let now = Utc::now().to_rfc3339();
@@ -186,7 +197,25 @@ fn create_project(request: CreateProjectRequest) -> AppResult<ProjectState> {
 
     write_json_pretty(&project_path.join(".gtm-agent/config.json"), &config)?;
     write_workspace_files(&project_path, &config)?;
+    save_last_project_path(&project_path)?;
     load_project(config.path)
+}
+
+#[tauri::command]
+fn load_last_project() -> AppResult<Option<ProjectState>> {
+    let settings = read_app_settings()?;
+    if let Some(project_path) = settings.last_project_path {
+        let path = PathBuf::from(project_path);
+        if path.join(".gtm-agent/config.json").exists() {
+            return load_project(path.to_string_lossy().to_string()).map(Some);
+        }
+    }
+
+    let Some(path) = latest_project_path()? else {
+        return Ok(None);
+    };
+    save_last_project_path(&path)?;
+    load_project(path.to_string_lossy().to_string()).map(Some)
 }
 
 #[tauri::command]
@@ -699,7 +728,7 @@ fn write_workspace_files(project_path: &Path, config: &ProjectConfig) -> AppResu
     fs::write(
         project_path.join("AGENTS.md"),
         format!(
-            "# GTM Agent Project: {}\n\nThis folder is a local Codex workspace managed by GTM Agent.\n\n## Source of truth\n\n- `product-information.md`: product, features, proof points, and use cases.\n- `marketing-strategy.md`: ICP, personas, pain points, positioning, and channels.\n- `competitor-analysis.md`: competitors, alternatives, and positioning gaps.\n- `brand-voice.md`: voice, tone, vocabulary, and public messaging rules.\n\n## Event protocol\n\nWhen GTM Agent asks you to report progress, append JSON lines to `.gtm-agent/events.jsonl` with `eventType`, `summary`, `payload`, and `createdAt`.\n\nWebsite: {}\n",
+            "# GTM Agent Project: {}\n\nThis folder is managed by GTM Agent for brand and GTM research.\n\n## Source of truth\n\n- `product-information.md`: product, features, proof points, and use cases.\n- `marketing-strategy.md`: ICP, personas, pain points, positioning, and channels.\n- `competitor-analysis.md`: competitors, alternatives, and positioning gaps.\n- `brand-voice.md`: voice, tone, vocabulary, and public messaging rules.\n\n## Event protocol\n\nWhen GTM Agent asks you to report progress, append JSON lines to `.gtm-agent/events.jsonl` with `eventType`, `summary`, `payload`, and `createdAt`.\n\nWebsite: {}\n",
             config.name, config.website_url
         ),
     )?;
@@ -853,21 +882,23 @@ fn initial_analysis_prompt(config: &ProjectConfig) -> String {
     format!(
         r#"# GTM Agent Initial Analysis
 
-You are running inside a local Codex workspace for GTM Agent.
+Analyze this brand from public evidence and turn the findings into four concise GTM source documents.
 
-Analyze this website: {url}
+Website: {url}
 
-Rewrite exactly these files with concrete, useful findings:
-- product-information.md
-- marketing-strategy.md
-- competitor-analysis.md
-- brand-voice.md
+Work in this order:
 
-For `competitor-analysis.md`, include a short `## Verified competitor links` section near the top. Each item must be a Markdown link using the official company or product website, for example `- [Competitor Name](https://example.com)`. Only include links you have verified from the public web or the source website; omit uncertain competitors instead of guessing domains.
+1. Research the product beyond the homepage. Use the source website, visible subpages, pricing/docs/about/support pages, app store listings, comparison pages, and relevant public search results when available.
+2. Rewrite `product-information.md` first. Start it with a short, plain-language product description paragraph with no URLs. Then add product scope, audience, use cases, proof points, pricing/business model if found, and source notes.
+3. Rewrite `marketing-strategy.md` next with ICP, segments, pain points, positioning, channels, conversion ideas, and caveats.
+4. Rewrite `competitor-analysis.md` next. Do not copy only the landing page's named competitors. Verify competitors from public research. Include a short `## Verified competitor links` section near the top. Each item must be a Markdown link using the official company or product website, for example `- [Competitor Name](https://example.com)`. Only include links you have verified; omit uncertain competitors instead of guessing domains.
+5. Rewrite `brand-voice.md` last with tone, vocabulary, messaging rules, claims to avoid, and example language.
 
-Keep the files concise but specific enough that future GTM tasks can use them as source context. Include uncertainty where evidence is weak. Do not create outreach drafts, schedules, plugins, or extra strategy files. Do not post publicly or send messages.
+Save each file immediately after you finish that file, then append a progress event before moving to the next file. This lets the app show completed documents one by one.
 
-Append progress and completion events to `.gtm-agent/events.jsonl` as JSON lines with eventType, summary, payload, and createdAt.
+Write progress messages for the app user in a clean product-research tone. Do not mention local sessions, Codex internals, workspace mechanics, tools, priority instructions, or implementation details. Say what was learned or what is being researched next.
+
+Keep the files concise but specific enough that future GTM tasks can use them as source context. Include uncertainty where evidence is weak. Do not create outreach drafts, schedules, plugins, or extra strategy files. Do not post publicly or send messages. Rewrite only the four requested Markdown files and append progress/completion events to `.gtm-agent/events.jsonl` as JSON lines with eventType, summary, payload, and createdAt.
 "#,
         url = config.website_url
     )
@@ -935,6 +966,61 @@ fn write_json_pretty<T: Serialize>(path: &Path, value: &T) -> AppResult<()> {
     }
     fs::write(path, serde_json::to_vec_pretty(value)?)?;
     Ok(())
+}
+
+fn projects_root() -> AppResult<PathBuf> {
+    let home =
+        dirs::home_dir().ok_or_else(|| AppError::Invalid("cannot locate home directory".into()))?;
+    Ok(home.join("GTM Agent Projects"))
+}
+
+fn latest_project_path() -> AppResult<Option<PathBuf>> {
+    let root = projects_root()?;
+    if !root.exists() {
+        return Ok(None);
+    }
+
+    let mut projects = Vec::<(u64, PathBuf)>::new();
+    for entry in fs::read_dir(root)? {
+        let path = entry?.path();
+        let config_path = path.join(".gtm-agent/config.json");
+        if !config_path.exists() {
+            continue;
+        }
+        let modified = fs::metadata(&config_path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        projects.push((modified, path));
+    }
+
+    projects.sort_by_key(|(modified, _)| *modified);
+    Ok(projects.pop().map(|(_, path)| path))
+}
+
+fn app_settings_path() -> AppResult<PathBuf> {
+    let config_dir = dirs::config_dir()
+        .ok_or_else(|| AppError::Invalid("cannot locate config directory".into()))?;
+    Ok(config_dir.join("GTM Agent").join("settings.json"))
+}
+
+fn read_app_settings() -> AppResult<AppSettings> {
+    let path = app_settings_path()?;
+    if !path.exists() {
+        return Ok(AppSettings::default());
+    }
+    read_json(&path)
+}
+
+fn save_last_project_path(project_path: &Path) -> AppResult<()> {
+    write_json_pretty(
+        &app_settings_path()?,
+        &AppSettings {
+            last_project_path: Some(project_path.to_string_lossy().to_string()),
+        },
+    )
 }
 
 #[cfg(test)]
