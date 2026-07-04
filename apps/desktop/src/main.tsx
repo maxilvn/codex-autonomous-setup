@@ -304,11 +304,19 @@ function extractProductDescription(docs: ContextDoc[]) {
   const paragraph = markdownBlocks(doc.content).find((block) => {
     if (block.type !== "paragraph") return false;
     const text = block.text.toLowerCase();
-    return block.text.length > 60 && !text.includes("status:") && !text.includes("source url:");
+    const urlCount = (block.text.match(/https?:\/\/|\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b/gi) ?? []).length;
+    return (
+      block.text.length > 60
+      && urlCount < 2
+      && !text.includes("status:")
+      && !text.includes("source url")
+      && !text.includes("urls checked")
+      && !text.includes("sources checked")
+    );
   });
 
   return paragraph?.type === "paragraph"
-    ? paragraph.text
+    ? stripMarkdownLinks(paragraph.text)
     : "Product description will appear here after analysis.";
 }
 
@@ -410,6 +418,14 @@ function cleanInline(value: string) {
     .replace(/__([^_]+)__/g, "$1")
     .replace(/\*([^*]+)\*/g, "$1")
     .replace(/_([^_]+)_/g, "$1")
+    .trim();
+}
+
+function stripMarkdownLinks(value: string) {
+  return value
+    .replace(/\[([^\]]+)]\((https?:\/\/[^)]+)\)/g, "$1")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/\s{2,}/g, " ")
     .trim();
 }
 
