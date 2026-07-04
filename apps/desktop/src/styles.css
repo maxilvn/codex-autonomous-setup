@@ -263,26 +263,67 @@ input:focus {
 
 .workspace {
   display: grid;
-  gap: 18px;
+  gap: 28px;
 }
 
-.workspace-header {
-  display: flex;
+.brand-hero {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding-top: 20px;
+  text-align: center;
+}
+
+.company-lockup {
+  display: inline-grid;
+  grid-template-columns: auto 1fr;
   align-items: center;
-  justify-content: space-between;
-  gap: 20px;
+  gap: 12px;
+  text-align: left;
 }
 
-.workspace-header h2 {
-  margin: 0 0 6px;
-  font-size: 32px;
-  line-height: 40px;
+.company-lockup .url-icon {
+  width: 32px;
+  height: 32px;
+}
+
+.company-lockup .url-icon img {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+}
+
+.company-lockup strong,
+.company-lockup span {
+  display: block;
+}
+
+.company-lockup strong {
+  color: #171717;
+  font-size: 22px;
+  line-height: 26px;
+  font-weight: 650;
+}
+
+.company-lockup span {
+  color: #666666;
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.brand-hero h1 {
+  margin: 0;
+  font-size: 34px;
+  line-height: 42px;
+  font-weight: 650;
   letter-spacing: 0;
 }
 
-.actions {
-  display: flex;
-  gap: 8px;
+.analysis-grid {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.85fr) minmax(0, 2fr);
+  gap: 18px;
+  align-items: start;
 }
 
 .label {
@@ -297,58 +338,38 @@ input:focus {
 
 .activity-card {
   display: grid;
-  gap: 18px;
-  padding: 22px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  height: min(430px, calc(100vh - 330px));
+  min-height: 320px;
+  padding: 20px;
 }
 
-.activity-head,
-.section-head {
+.activity-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
 }
 
-.activity-head h3 {
+.activity-head h2 {
   margin: 0;
-  font-size: 22px;
-  line-height: 30px;
+  font-size: 20px;
+  line-height: 28px;
   letter-spacing: 0;
-}
-
-.status-pill {
-  border: 1px solid #eaeaea;
-  border-radius: 999px;
-  padding: 4px 9px;
-  color: #666666;
-  background: #fafafa;
-  font-size: 12px;
-  line-height: 16px;
-  font-weight: 600;
-}
-
-.status-pill.running {
-  color: #107d32;
-  background: #ecfdec;
-  border-color: #d3fad1;
-}
-
-.status-pill.failed {
-  color: #d8001b;
-  background: #ffeeef;
-  border-color: #ffd7d6;
 }
 
 .activity-list {
   display: grid;
   gap: 2px;
+  align-content: start;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .activity-item {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 10px;
-  padding: 10px 0;
+  padding: 12px 0;
   border-top: 1px solid #f2f2f2;
 }
 
@@ -356,46 +377,35 @@ input:focus {
   border-top: 0;
 }
 
-.activity-item strong {
-  display: block;
-  margin-bottom: 3px;
-  font-size: 13px;
-  line-height: 18px;
-}
-
 .activity-item p {
   margin: 0;
   color: #666666;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.analyzing-shimmer {
+  position: relative;
+  width: max-content;
+  overflow: hidden;
+  color: #8f8f8f;
   font-size: 13px;
   line-height: 20px;
 }
 
-.activity-dot {
-  width: 7px;
-  height: 7px;
-  margin-top: 7px;
-  border-radius: 999px;
-  background: #a8a8a8;
+.analyzing-shimmer::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, #ffffffcc, transparent);
+  animation: shimmer 1.35s infinite;
 }
 
-.activity-dot.message,
-.activity-dot.done {
-  background: #171717;
-}
-
-.activity-dot.files,
-.activity-dot.thread {
-  background: #107d32;
-}
-
-.activity-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-top: 2px;
-  color: #8f8f8f;
-  font-size: 12px;
-  min-width: 0;
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
 }
 
 .run-error {
@@ -415,30 +425,112 @@ code {
   overflow-wrap: anywhere;
 }
 
-.docs {
+.documents-panel {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 14px;
+  padding: 4px 0;
 }
 
-.docs-section {
+.document-list {
   display: grid;
-  gap: 10px;
+  gap: 2px;
 }
 
-.section-head span {
+.document-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: auto;
+  min-height: 54px;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 6px;
+  color: #171717;
+  background: transparent;
+  text-align: left;
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 500;
+}
+
+.document-row:hover {
+  background: #fafafa;
+}
+
+.document-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: #666666;
+}
+
+.document-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.document-icon path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.document-chevron {
   color: #8f8f8f;
-  font-size: 12px;
-}
-
-.doc {
-  padding: 16px;
-}
-
-.doc h3 {
-  margin-bottom: 10px;
-  font-size: 16px;
+  font-size: 24px;
   line-height: 24px;
+}
+
+.doc-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: #00000033;
+}
+
+.doc-modal {
+  position: relative;
+  width: min(780px, 100%);
+  max-height: min(760px, calc(100vh - 64px));
+  overflow: auto;
+  border: 1px solid #eaeaea;
+  border-radius: 12px;
+  padding: 28px;
+  background: #ffffff;
+  box-shadow: 0 24px 80px #00000026;
+}
+
+.doc-modal h2 {
+  margin: 0 0 16px;
+  color: #171717;
+  font-size: 28px;
+  line-height: 36px;
+  letter-spacing: 0;
+}
+
+.modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-color: #eaeaea;
+  border-radius: 999px;
+  padding: 0;
+  color: #666666;
+  background: #ffffff;
+  font-size: 22px;
+  line-height: 1;
 }
 
 .doc-content {
@@ -450,6 +542,10 @@ code {
   color: #4d4d4d;
   font-size: 13px;
   line-height: 20px;
+}
+
+.doc-content.full {
+  max-height: none;
 }
 
 .doc-content h4 {
@@ -485,9 +581,7 @@ code {
   }
 
   .topbar,
-  .workspace-header,
-  .activity-head,
-  .section-head {
+  .activity-head {
     display: grid;
   }
 
@@ -506,8 +600,21 @@ code {
   }
 
   .url-bar,
-  .docs {
+  .analysis-grid {
     grid-template-columns: 1fr;
+  }
+
+  .brand-hero {
+    padding-top: 8px;
+  }
+
+  .brand-hero h1 {
+    font-size: 28px;
+    line-height: 36px;
+  }
+
+  .activity-card {
+    height: 380px;
   }
 
   .url-bar {
@@ -529,7 +636,7 @@ code {
     width: 100%;
   }
 
-  .actions {
-    flex-wrap: wrap;
+  .doc-modal-backdrop {
+    padding: 16px;
   }
 }

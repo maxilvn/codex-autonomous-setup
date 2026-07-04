@@ -2,7 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./lib/api";
-import type { CodexDetection, ProjectState } from "./lib/types";
+import type { CodexDetection, ContextDoc, ProjectState } from "./lib/types";
 import "./styles.css";
 
 function App() {
@@ -55,29 +55,17 @@ function App() {
     }
   }
 
-  async function rerunAnalysis() {
-    if (!project) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.runInitialAnalysis(project.config.path);
-      setProject(await api.loadProject(project.config.path));
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <main className="shell">
-      <section className="topbar">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true" />
-          <span>GTM Agent</span>
-        </div>
-        <CodexBadge codex={project?.codex ?? codex} />
-      </section>
+      {!project ? (
+        <section className="topbar">
+          <div className="brand">
+            <span className="brand-mark" aria-hidden="true" />
+            <span>GTM Agent</span>
+          </div>
+          <CodexBadge codex={codex} />
+        </section>
+      ) : null}
 
       {error ? <div className="error">{error}</div> : null}
 
@@ -104,12 +92,7 @@ function App() {
           </div>
         </section>
       ) : (
-        <ProjectView
-          project={project}
-          busy={busy}
-          onRun={rerunAnalysis}
-          onOpen={() => api.openProjectInCodex(project.config.path)}
-        />
+        <ProjectView project={project} />
       )}
     </main>
   );
@@ -149,92 +132,97 @@ function CodexBadge({ codex }: { codex: CodexDetection | null | undefined }) {
   );
 }
 
-function ProjectView({
-  project,
-  busy,
-  onRun,
-  onOpen,
-}: {
-  project: ProjectState;
-  busy: boolean;
-  onRun: () => Promise<void>;
-  onOpen: () => Promise<void>;
-}) {
+function ProjectView({ project }: { project: ProjectState }) {
+  const [selectedDoc, setSelectedDoc] = React.useState<ContextDoc | null>(null);
   const run = project.latestRun;
   const activity = project.runActivity.length
     ? project.runActivity
     : [{ kind: "idle", title: "Waiting", message: "Codex text output will appear here." }];
+  const isRunning = run?.status === "running";
+  const host = displayHost(project.config.websiteUrl);
 
   return (
     <section className="workspace">
-      <div className="workspace-header">
-        <div>
-          <p className="eyebrow">Workspace</p>
-          <h2>{project.config.name}</h2>
-          <code>{project.config.path}</code>
+      <div className="brand-hero">
+        <div className="company-lockup">
+          <UrlIcon websiteUrl={project.config.websiteUrl} />
+          <div>
+            <strong>{project.config.name}</strong>
+            <span>{host}</span>
+          </div>
         </div>
-        <div className="actions">
-          <button className="secondary" onClick={onOpen}>Open in Codex</button>
-          <button onClick={onRun} disabled={busy || run?.status === "running"}>
-            {run?.status === "running" ? "Running..." : "Run analysis"}
-          </button>
-        </div>
+        <h1>Brand Analysis</h1>
       </div>
 
-      <section className="panel activity-card">
-        <div className="activity-head">
-          <div>
-            <p className="eyebrow">Codex output</p>
-            <h3>{run?.status === "running" ? "Running analysis" : "Latest output"}</h3>
+      <div className="analysis-grid">
+        <aside className="documents-panel">
+          <p className="eyebrow">Documents</p>
+          <div className="document-list">
+            {project.docs.map((doc) => (
+              <button
+                className="document-row"
+                key={doc.key}
+                type="button"
+                onClick={() => setSelectedDoc(doc)}
+              >
+                <span className="document-icon" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" focusable="false">
+                    <path d="M4 1.75h5.2L12.75 5.3v8.95H4z" />
+                    <path d="M9 1.9v3.6h3.55M6 8h4M6 10.5h4" />
+                  </svg>
+                </span>
+                <span>{doc.title}</span>
+                <span className="document-chevron" aria-hidden="true">›</span>
+              </button>
+            ))}
           </div>
-          <span className={`status-pill ${run?.status ?? "idle"}`}>
-            {run?.status ?? "idle"}
-          </span>
-        </div>
-        <div className="activity-list">
-          {activity.map((item, index) => (
-            <article className="activity-item" key={`${item.title}-${index}`}>
-              <span className={`activity-dot ${item.kind}`} />
-              <div>
-                <strong>{item.title}</strong>
-                <p>{item.message}</p>
-              </div>
-            </article>
-          ))}
-        </div>
-        {run?.codexThreadId ? (
-          <div className="activity-meta">
-            <span>Thread</span>
-            <code>{run.codexThreadId}</code>
-          </div>
-        ) : null}
-        {run?.error ? <p className="run-error">{run.error}</p> : null}
-      </section>
+        </aside>
 
-      <section className="docs-section">
-        <div className="section-head">
-          <p className="eyebrow">Generated files</p>
-          <span>{project.docs.length} markdown docs</span>
-        </div>
-        <section className="docs">
-          {project.docs.map((doc) => (
-            <article className="panel doc" key={doc.key}>
-              <p className="label">{doc.fileName}</p>
-              <h3>{doc.title}</h3>
-              <RenderedDoc content={doc.content} />
-            </article>
-          ))}
+        <section className="panel activity-card">
+          <div className="activity-head">
+            <div>
+              <p className="eyebrow">Output</p>
+              <h2>{isRunning ? "Analysis running" : "Analysis output"}</h2>
+            </div>
+          </div>
+          <div className="activity-list">
+            {activity.map((item, index) => (
+              <article className="activity-item" key={`${item.title}-${index}`}>
+                <p>{item.message}</p>
+              </article>
+            ))}
+          </div>
+          {isRunning ? <div className="analyzing-shimmer">Analyzing...</div> : null}
+          {run?.error ? <p className="run-error">{run.error}</p> : null}
         </section>
-      </section>
+      </div>
+
+      {selectedDoc ? (
+        <div className="doc-modal-backdrop" onClick={() => setSelectedDoc(null)}>
+          <article className="doc-modal" onClick={(event) => event.stopPropagation()}>
+            <button
+              className="modal-close"
+              type="button"
+              aria-label="Close"
+              onClick={() => setSelectedDoc(null)}
+            >
+              ×
+            </button>
+            <p className="label">{selectedDoc.fileName}</p>
+            <h2>{selectedDoc.title}</h2>
+            <RenderedDoc content={selectedDoc.content} full />
+          </article>
+        </div>
+      ) : null}
     </section>
   );
 }
 
-function RenderedDoc({ content }: { content: string }) {
+function RenderedDoc({ content, full = false }: { content: string; full?: boolean }) {
   const blocks = markdownBlocks(content);
 
   return (
-    <div className="doc-content">
+    <div className={full ? "doc-content full" : "doc-content"}>
       {blocks.map((block, index) => {
         if (block.type === "heading") {
           return <h4 key={index}>{block.text}</h4>;
@@ -356,6 +344,14 @@ function faviconForUrl(value: string) {
     return `https://www.google.com/s2/favicons?sz=64&domain_url=${encodeURIComponent(url.origin)}`;
   } catch {
     return null;
+  }
+}
+
+function displayHost(value: string) {
+  try {
+    return new URL(value).host.replace(/^www\./, "");
+  } catch {
+    return value.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
   }
 }
 
