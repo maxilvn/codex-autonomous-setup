@@ -354,10 +354,6 @@ input:focus {
   grid-template-columns: 132px minmax(0, 1fr);
 }
 
-.workspace-company-open .analysis-grid {
-  grid-template-columns: 320px minmax(0, 1fr);
-}
-
 .label {
   margin: 0 0 8px;
   color: #8f8f8f;
@@ -519,11 +515,12 @@ code {
 }
 
 .workspace-company-open .documents-card {
-  width: auto;
+  width: 320px;
   height: var(--analysis-card-height);
   min-height: 320px;
   padding: 14px 10px 20px;
   overflow: auto;
+  z-index: 2;
 }
 
 .workspace-channels .documents-card .company-lockup {
