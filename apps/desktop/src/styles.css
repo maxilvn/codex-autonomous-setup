@@ -280,14 +280,23 @@ input:focus {
 }
 
 .company-lockup .url-icon {
+  align-self: center;
   width: 30px;
   height: 30px;
+  transform: translateY(1px);
 }
 
 .company-lockup .url-icon img {
-  width: 24px;
-  height: 24px;
+  display: block;
+  width: 22px;
+  height: 22px;
   border-radius: 5px;
+}
+
+.company-lockup .url-icon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
 }
 
 .company-lockup strong,
