@@ -522,7 +522,7 @@ code {
   width: auto;
   height: var(--analysis-card-height);
   min-height: 320px;
-  padding: 20px 10px;
+  padding: 6px 10px 20px;
   overflow: auto;
 }
 
@@ -535,7 +535,11 @@ code {
 }
 
 .workspace-company-open .documents-card .company-lockup {
-  padding: 0 10px;
+  width: max-content;
+  grid-template-columns: 34px auto;
+  justify-content: start;
+  gap: 6px;
+  padding: 0 12px;
 }
 
 .workspace-channels .documents-card .company-lockup .url-icon {
@@ -545,7 +549,17 @@ code {
   box-shadow: 0 1px 2px #0000000d;
 }
 
+.workspace-company-open .documents-card .company-lockup .url-icon {
+  width: 34px;
+  height: 34px;
+}
+
 .workspace-channels .documents-card .company-lockup .url-icon img {
+  width: 28px;
+  height: 28px;
+}
+
+.workspace-company-open .documents-card .company-lockup .url-icon img {
   width: 28px;
   height: 28px;
 }
@@ -561,8 +575,8 @@ code {
 
 .workspace-company-open .documents-card .company-lockup strong {
   max-width: none;
-  font-size: 20px;
-  line-height: 32px;
+  font-size: 16px;
+  line-height: 24px;
 }
 
 .workspace-channels .documents-body {
