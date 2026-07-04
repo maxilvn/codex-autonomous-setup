@@ -351,11 +351,11 @@ input:focus {
 }
 
 .workspace-channels .analysis-grid {
-  grid-template-columns: 146px minmax(0, 1fr);
+  grid-template-columns: 132px minmax(0, 1fr);
 }
 
 .workspace-company-open .analysis-grid {
-  grid-template-columns: minmax(320px, 0.75fr) minmax(0, 2.25fr);
+  grid-template-columns: 320px minmax(0, 1fr);
 }
 
 .label {
@@ -510,10 +510,10 @@ code {
 }
 
 .workspace-channels .documents-card {
-  width: 146px;
+  width: 132px;
   height: 50px;
   min-height: 50px;
-  padding: 6px 8px;
+  padding: 6px;
   overflow: hidden;
   box-shadow: 0 8px 28px #0000000a;
 }
@@ -530,7 +530,7 @@ code {
   align-items: center;
   grid-template-columns: 34px auto;
   justify-content: center;
-  gap: 7px;
+  gap: 6px;
   padding: 0;
 }
 
