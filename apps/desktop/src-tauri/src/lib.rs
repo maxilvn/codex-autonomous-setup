@@ -1,3 +1,4 @@
+use base64::Engine;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -173,6 +174,7 @@ struct ChromeProfile {
     email: Option<String>,
     account_name: Option<String>,
     avatar_path: Option<String>,
+    avatar_data_url: Option<String>,
     profile_color: Option<i64>,
     has_x_session: bool,
     is_recommended: bool,
@@ -238,14 +240,6 @@ struct XChannelStatus {
     updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct XBrowserIdentity {
-    handle: Option<String>,
-    label: Option<String>,
-    avatar_url: Option<String>,
-}
-
 struct XLoginCheck {
     account_status: XAccountStatus,
     account_label: Option<String>,
@@ -282,6 +276,13 @@ const DOCS: [(&str, &str, &str); 4] = [
     ("brand_voice", "brand-voice.md", "Brand Voice"),
 ];
 
+const X_CHANNEL_CONTEXT_DOCS: [(&str, &str, &str); 4] = [
+    ("x_profile", "profile.md", "Profile"),
+    ("x_voice", "voice.md", "Voice"),
+    ("x_rules", "rules.md", "Rules"),
+    ("x_examples", "examples.md", "Examples"),
+];
+
 const RPC_INITIALIZE_ID: i64 = 1;
 const RPC_SESSION_NEW_ID: i64 = 2;
 const RPC_SESSION_PROMPT_ID: i64 = 3;
@@ -296,6 +297,7 @@ pub fn run() {
             create_project,
             load_last_project,
             load_project,
+            load_channel_context_doc,
             run_initial_analysis,
             configure_channel,
             list_chrome_profiles,
@@ -424,6 +426,28 @@ fn load_project(project_path: String) -> AppResult<ProjectState> {
         channel_setups: read_channel_setups(&path),
         latest_run,
         run_activity,
+    })
+}
+
+#[tauri::command]
+fn load_channel_context_doc(
+    project_path: String,
+    channel_id: String,
+    file_name: String,
+) -> AppResult<ContextDoc> {
+    if channel_id != "x" {
+        return Err(AppError::Invalid("unsupported channel".into()));
+    }
+    let (key, file_name, title) = x_channel_context_doc(&file_name)
+        .ok_or_else(|| AppError::Invalid("unsupported channel file".into()))?;
+    let path = PathBuf::from(project_path)
+        .join(".gtm-agent/channels/x")
+        .join(file_name);
+    Ok(ContextDoc {
+        key: key.into(),
+        file_name: file_name.into(),
+        title: title.into(),
+        content: fs::read_to_string(path).unwrap_or_default(),
     })
 }
 
@@ -754,6 +778,7 @@ fn read_chrome_profiles() -> AppResult<Vec<ChromeProfile>> {
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_string),
             avatar_path: chrome_profile_avatar_path(&user_data_dir, id),
+            avatar_data_url: chrome_profile_avatar_data_url(&user_data_dir, id),
             profile_color: profile
                 .get("profile_highlight_color")
                 .and_then(Value::as_i64),
@@ -796,6 +821,13 @@ fn chrome_profile_avatar_path(user_data_dir: &Path, profile_id: &str) -> Option<
     .map(|path| path.to_string_lossy().to_string())
 }
 
+fn chrome_profile_avatar_data_url(user_data_dir: &Path, profile_id: &str) -> Option<String> {
+    let path = chrome_profile_avatar_path(user_data_dir, profile_id)?;
+    let bytes = fs::read(path).ok()?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Some(format!("data:image/png;base64,{encoded}"))
+}
+
 fn chrome_profile_sort_key(profile_id: &str) -> i64 {
     if profile_id == "Default" {
         return i64::MAX;
@@ -831,7 +863,6 @@ fn check_x_login_in_chrome(profile_id: Option<&str>) -> AppResult<XLoginCheck> {
         });
     };
     if !cookie_status.has_session {
-        open_chrome_url_in_profile("https://x.com/i/flow/login", profile_id)?;
         return Ok(XLoginCheck {
             account_status: XAccountStatus::NeedsLogin,
             account_label: None,
@@ -842,23 +873,11 @@ fn check_x_login_in_chrome(profile_id: Option<&str>) -> AppResult<XLoginCheck> {
         });
     }
 
-    open_chrome_url_in_profile("https://x.com/home", profile_id)?;
-    thread::sleep(std::time::Duration::from_millis(2200));
-    let browser_identity = inspect_x_identity_in_chrome().unwrap_or(None);
-    let account_handle = browser_identity
-        .as_ref()
-        .and_then(|identity| identity.handle.clone());
-    let account_label = browser_identity
-        .as_ref()
-        .and_then(|identity| identity.label.clone())
-        .or_else(|| account_handle.clone())
-        .or_else(|| Some("X account in Chrome".into()));
-    let account_avatar_url = browser_identity.and_then(|identity| identity.avatar_url);
     Ok(XLoginCheck {
         account_status: XAccountStatus::Authenticated,
-        account_label,
-        account_handle,
-        account_avatar_url,
+        account_label: Some("X account in Chrome".into()),
+        account_handle: None,
+        account_avatar_url: None,
         chrome_profile_id: Some(cookie_profile_id),
         check_method: "chrome_cookie_probe".into(),
     })
@@ -920,52 +939,6 @@ fn check_x_session_cookies(profile_id: Option<&str>) -> AppResult<XCookieStatus>
         profile_id: Some(profile_id),
         has_session: count > 0,
     })
-}
-
-fn inspect_x_identity_in_chrome() -> AppResult<Option<XBrowserIdentity>> {
-    let script = r#"
-tell application "Google Chrome"
-  if not (exists window 1) then return ""
-  set foundWindow to 0
-  set foundTab to 0
-  repeat with windowIndex from 1 to count windows
-    repeat with tabIndex from 1 to count tabs of window windowIndex
-      set tabUrl to URL of tab tabIndex of window windowIndex
-      if tabUrl starts with "https://x.com" or tabUrl starts with "https://twitter.com" then
-        set foundWindow to windowIndex
-        set foundTab to tabIndex
-        exit repeat
-      end if
-    end repeat
-    if foundWindow is not 0 then exit repeat
-  end repeat
-  if foundWindow is 0 then return ""
-  set index of window foundWindow to 1
-  set active tab index of window 1 to foundTab
-  set theTab to active tab of window 1
-  set accountJson to ""
-  try
-    set accountJson to execute theTab javascript "(() => { const cleanHandle = (value) => { const match = String(value || '').match(/@?([A-Za-z0-9_]{1,15})/); return match ? '@' + match[1] : ''; }; const profileLink = document.querySelector('a[data-testid=\"AppTabBar_Profile_Link\"]'); const handleFromLink = profileLink ? cleanHandle((profileLink.getAttribute('href') || '').split('/').filter(Boolean).pop()) : ''; const switcher = document.querySelector('[data-testid=\"SideNav_AccountSwitcher_Button\"]'); const switcherText = switcher ? switcher.innerText : ''; const handleFromText = cleanHandle((switcherText.match(/@[A-Za-z0-9_]{1,15}/) || [''])[0]); const handle = handleFromLink || handleFromText; const lines = switcherText.split('\\n').map(v => v.trim()).filter(Boolean); const label = lines.find(v => !v.startsWith('@')) || handle || ''; const avatar = switcher ? (switcher.querySelector('img')?.src || '') : ''; return JSON.stringify({ handle, label, avatarUrl: avatar }); })()"
-  end try
-  return accountJson
-end tell
-"#;
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .map_err(|err| AppError::Open(format!("failed to inspect Chrome: {err}")))?;
-    if !output.status.success() {
-        return Err(AppError::Open(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ));
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if stdout.is_empty() {
-        return Ok(None);
-    }
-    let identity: XBrowserIdentity = serde_json::from_str(&stdout)?;
-    Ok(Some(identity))
 }
 
 fn execute_initial_analysis(
@@ -1512,6 +1485,13 @@ fn read_docs(project_path: &Path) -> AppResult<Vec<ContextDoc>> {
             })
         })
         .collect()
+}
+
+fn x_channel_context_doc(file_name: &str) -> Option<(&'static str, &'static str, &'static str)> {
+    X_CHANNEL_CONTEXT_DOCS
+        .iter()
+        .copied()
+        .find(|(_, candidate, _)| *candidate == file_name)
 }
 
 fn read_channel_setups(project_path: &Path) -> Vec<ChannelSetup> {

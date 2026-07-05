@@ -1,7 +1,6 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./lib/api";
 import type {
@@ -491,6 +490,17 @@ function ProjectView({
     }
   }
 
+  async function openXChannelDoc(fileName: string) {
+    setChannelError(null);
+    try {
+      setSelectedDoc(
+        await api.loadChannelContextDoc(project.config.path, "x", fileName),
+      );
+    } catch (err) {
+      setChannelError(String(err));
+    }
+  }
+
   React.useEffect(() => {
     setOnboardingStep(isAnalysisComplete ? "channels" : "analysis");
     setSelectedDoc(null);
@@ -505,7 +515,11 @@ function ProjectView({
     const list = activityListRef.current;
     if (!list) return;
     list.scrollTop = list.scrollHeight;
-  }, [agentOutput.length, agentOutput.at(-1)?.message, isInitialAnalysisRunning]);
+  }, [
+    agentOutput.length,
+    agentOutput.at(-1)?.message,
+    isInitialAnalysisRunning,
+  ]);
 
   React.useEffect(() => {
     if (activeChannelId !== "x") {
@@ -631,10 +645,7 @@ function ProjectView({
           </div>
         </aside>
 
-        <section
-          className="panel activity-card"
-          aria-hidden={showChannels}
-        >
+        <section className="panel activity-card" aria-hidden={showChannels}>
           <div className="activity-head">
             <h2>Codex Output</h2>
           </div>
@@ -759,6 +770,9 @@ function ProjectView({
                           void verifyXAccountInChrome(profileId)
                         }
                         onOpenLogin={(profileId) => void openXLogin(profileId)}
+                        onOpenFile={(fileName) =>
+                          void openXChannelDoc(fileName)
+                        }
                         embedded
                       />
                     </div>
@@ -871,6 +885,7 @@ function XChannelSetupPanel({
   onSelectChromeProfile,
   onVerify,
   onOpenLogin,
+  onOpenFile,
   embedded = false,
 }: {
   channel: MarketingChannel;
@@ -886,6 +901,7 @@ function XChannelSetupPanel({
   onSelectChromeProfile: (profileId: string) => void;
   onVerify: (profileId?: string | null) => void;
   onOpenLogin: (profileId?: string | null) => void;
+  onOpenFile: (fileName: string) => void;
   embedded?: boolean;
 }) {
   const [isProfilePickerOpen, setIsProfilePickerOpen] = React.useState(false);
@@ -906,22 +922,27 @@ function XChannelSetupPanel({
   const selectedChromeProfile = chromeProfiles.find(
     (profile) => profile.id === selectedChromeProfileId,
   );
+  const selectedProfileHasXSession = Boolean(
+    selectedChromeProfile?.hasXSession,
+  );
   const accountName =
     setup?.accountHandle ?? setup?.accountLabel ?? "X account in Chrome";
   const loginLabel = hasVerifiedSelectedProfile
     ? `Signed in as ${accountName}`
-    : needsLogin
+    : needsLogin || (selectedChromeProfile && !selectedProfileHasXSession)
       ? "No signed-in X account found in this Chrome profile."
       : isUnknown
         ? "GTM Agent could not verify this Chrome profile. Check again or choose another profile."
         : selectedChromeProfile
-          ? "GTM Agent has not verified the X session for this profile yet."
+          ? selectedProfileHasXSession
+            ? "X session found in this Chrome profile. The username appears here once analysis can read it."
+            : "No signed-in X account found in this Chrome profile."
           : "Choose the Chrome profile GTM Agent should check.";
   const actionLabel = isChecking
     ? "Checking..."
     : isRunActive
       ? "Analyzing..."
-      : needsLogin
+      : needsLogin || (selectedChromeProfile && !selectedProfileHasXSession)
         ? "Sign in to X"
         : hasVerifiedSelectedProfile && !hasSelectedProfileForRun
           ? "Select"
@@ -970,6 +991,13 @@ function XChannelSetupPanel({
                 <div>
                   <span>{selectedChromeProfile.name}</span>
                   <p>{profileSubtitle(selectedChromeProfile)}</p>
+                  {selectedProfileHasXSession ? (
+                    <p className="x-selected-account">
+                      {hasVerifiedSelectedProfile && setup?.accountHandle
+                        ? setup.accountHandle
+                        : "Signed in to X"}
+                    </p>
+                  ) : null}
                 </div>
               </div>
             ) : (
@@ -990,28 +1018,16 @@ function XChannelSetupPanel({
             >
               Choose profile
             </button>
-            {!selectedChromeProfile ? null : needsLogin ? (
-              <>
-                <button
-                  className="secondary"
-                  type="button"
-                  onClick={() => {
-                    setHasSelectedProfileForRun(true);
-                    onVerify();
-                  }}
-                  disabled={isLoginActionBusy}
-                >
-                  Check again
-                </button>
-                <button
-                  className="secondary"
-                  type="button"
-                  onClick={() => onOpenLogin(selectedChromeProfileId)}
-                  disabled={isLoginActionBusy}
-                >
-                  Sign in to X
-                </button>
-              </>
+            {!selectedChromeProfile ? null : needsLogin ||
+              !selectedProfileHasXSession ? (
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => onOpenLogin(selectedChromeProfileId)}
+                disabled={isLoginActionBusy}
+              >
+                Sign in to X
+              </button>
             ) : (
               <button
                 type="button"
@@ -1075,6 +1091,15 @@ function XChannelSetupPanel({
                           ) : null}
                         </strong>
                         <span>{profileSubtitle(profile)}</span>
+                        <span
+                          className={
+                            profile.hasXSession
+                              ? "profile-x-status is-found"
+                              : "profile-x-status"
+                          }
+                        >
+                          {profileXStatusLabel(profile)}
+                        </span>
                       </div>
                       <em>
                         {profile.id === selectedChromeProfileId
@@ -1098,11 +1123,25 @@ function XChannelSetupPanel({
         <div className="x-analysis-grid">
           <div className="x-analysis-files">
             <p className="eyebrow">Writing</p>
-            {["profile.md", "voice.md", "rules.md", "examples.md"].map(
-              (file) => (
-                <code key={file}>{file}</code>
-              ),
-            )}
+            {X_CHANNEL_DOCS.map((doc) => (
+              <button
+                className="x-analysis-file-row"
+                key={doc.fileName}
+                type="button"
+                onClick={() => onOpenFile(doc.fileName)}
+              >
+                <span className="document-icon" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" focusable="false">
+                    <path d="M4 1.75h5.2L12.75 5.3v8.95H4z" />
+                    <path d="M9 1.9v3.6h3.55M6 8h4M6 10.5h4" />
+                  </svg>
+                </span>
+                <span>{doc.title}</span>
+                <span className="document-chevron" aria-hidden="true">
+                  ›
+                </span>
+              </button>
+            ))}
           </div>
           <div className="x-codex-card">
             <div className="x-codex-output">
@@ -1156,27 +1195,23 @@ function XChannelSetupPanel({
           />
         </div>
       )}
-
-      {isReady ? (
-        <div className="x-setup-files">
-          <p className="eyebrow">Channel context files</p>
-          <div>
-            {setup.files.map((file) => (
-              <code key={file}>{file}</code>
-            ))}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
 
+const X_CHANNEL_DOCS = [
+  { fileName: "profile.md", title: "Profile" },
+  { fileName: "voice.md", title: "Voice" },
+  { fileName: "rules.md", title: "Rules" },
+  { fileName: "examples.md", title: "Examples" },
+];
+
 function ChromeProfileAvatar({ profile }: { profile: ChromeProfile }) {
-  if (profile.avatarPath) {
+  if (profile.avatarDataUrl) {
     return (
       <img
         className="chrome-profile-avatar chrome-profile-avatar-image"
-        src={convertFileSrc(profile.avatarPath)}
+        src={profile.avatarDataUrl}
         alt=""
       />
     );
@@ -1198,6 +1233,10 @@ function profileSubtitle(profile: ChromeProfile) {
     profile.accountName ??
     (profile.isDefault ? "Default Chrome profile" : profile.id)
   );
+}
+
+function profileXStatusLabel(profile: ChromeProfile) {
+  return profile.hasXSession ? "Signed in to X" : "Not signed in";
 }
 
 function profileInitials(profile: ChromeProfile) {

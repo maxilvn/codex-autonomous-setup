@@ -71,6 +71,7 @@ export interface ChromeProfile {
   email?: string | null;
   accountName?: string | null;
   avatarPath?: string | null;
+  avatarDataUrl?: string | null;
   profileColor?: number | null;
   hasXSession: boolean;
   isRecommended: boolean;

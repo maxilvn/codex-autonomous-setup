@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AgentProviderStatus,
   ChromeProfile,
+  ContextDoc,
   ProjectState,
   RunState,
 } from "./types";
@@ -121,6 +122,17 @@ export const api = {
   },
   loadProject(projectPath: string) {
     return call<ProjectState>("load_project", { projectPath });
+  },
+  loadChannelContextDoc(
+    projectPath: string,
+    channelId: string,
+    fileName: string,
+  ) {
+    return call<ContextDoc>("load_channel_context_doc", {
+      projectPath,
+      channelId,
+      fileName,
+    });
   },
   runInitialAnalysis(projectPath: string) {
     return call<RunState>("run_initial_analysis", { projectPath });

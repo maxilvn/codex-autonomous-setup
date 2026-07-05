@@ -1030,6 +1030,13 @@ code {
   margin: 1px 0 0;
 }
 
+.x-selected-profile .x-selected-account {
+  color: #397546;
+  font-size: 12px;
+  line-height: 17px;
+  font-weight: 600;
+}
+
 .chrome-profile-avatar {
   display: grid;
   place-items: center;
@@ -1110,7 +1117,7 @@ code {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  min-height: 62px;
+  min-height: 72px;
   border: 1px solid #e8e8e8;
   border-radius: 8px;
   padding: 10px;
@@ -1157,6 +1164,34 @@ code {
   line-height: 18px;
 }
 
+.profile-picker-list .profile-x-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  margin-top: 4px;
+  color: #888888;
+  font-size: 11px;
+  line-height: 15px;
+  font-weight: 600;
+}
+
+.profile-picker-list .profile-x-status::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #cfcfcf;
+  content: "";
+}
+
+.profile-picker-list .profile-x-status.is-found {
+  color: #397546;
+}
+
+.profile-picker-list .profile-x-status.is-found::before {
+  background: #42a85b;
+}
+
 .profile-picker-list .profile-recommended {
   display: inline-flex;
   overflow: visible;
@@ -1191,28 +1226,45 @@ code {
 
 .x-analysis-grid {
   display: grid;
-  grid-template-columns: 176px minmax(0, 1fr);
+  grid-template-columns: 210px minmax(0, 1fr);
   gap: 12px;
   align-items: start;
 }
 
 .x-analysis-files {
   display: grid;
-  gap: 7px;
+  gap: 4px;
   border: 1px solid #eaeaea;
   border-radius: 8px;
   padding: 12px;
   background: #ffffff;
 }
 
-.x-analysis-files code {
-  border: 1px solid #eaeaea;
+.x-analysis-file-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  border: 0;
   border-radius: 6px;
-  padding: 5px 7px;
-  color: #4d4d4d;
+  padding: 6px;
+  background: transparent;
+  color: #171717;
+  text-align: left;
+}
+
+.x-analysis-file-row:hover {
   background: #fafafa;
-  font-size: 12px;
-  line-height: 16px;
+}
+
+.x-analysis-file-row span:nth-child(2) {
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .x-codex-output {
