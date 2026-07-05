@@ -149,9 +149,15 @@ struct ChannelSetup {
     id: String,
     name: String,
     status: ChannelSetupStatus,
+    account_status: XAccountStatus,
     login_status: XLoginStatus,
     analysis_status: XAnalysisStatus,
     account_label: Option<String>,
+    account_handle: Option<String>,
+    account_avatar_url: Option<String>,
+    chrome_profile_id: Option<String>,
+    check_method: Option<String>,
+    checked_at: Option<String>,
     path: String,
     files: Vec<String>,
 }
@@ -163,6 +169,7 @@ struct ChromeProfile {
     name: String,
     email: Option<String>,
     account_name: Option<String>,
+    profile_color: Option<i64>,
     is_default: bool,
 }
 
@@ -174,6 +181,22 @@ enum ChannelSetupStatus {
     Analyzing,
     Ready,
     Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum XAccountStatus {
+    NotConfigured,
+    Checking,
+    Authenticated,
+    NeedsLogin,
+    Unknown,
+}
+
+impl Default for XAccountStatus {
+    fn default() -> Self {
+        Self::NotConfigured
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -196,15 +219,34 @@ enum XAnalysisStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct XChannelStatus {
+    #[serde(default)]
+    account_status: XAccountStatus,
     login_status: XLoginStatus,
     analysis_status: XAnalysisStatus,
     account_label: Option<String>,
+    account_handle: Option<String>,
+    account_avatar_url: Option<String>,
+    chrome_profile_id: Option<String>,
+    check_method: Option<String>,
+    checked_at: Option<String>,
     updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct XBrowserIdentity {
+    handle: Option<String>,
+    label: Option<String>,
+    avatar_url: Option<String>,
+}
+
 struct XLoginCheck {
-    is_verified: bool,
+    account_status: XAccountStatus,
     account_label: Option<String>,
+    account_handle: Option<String>,
+    account_avatar_url: Option<String>,
+    chrome_profile_id: Option<String>,
+    check_method: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -253,7 +295,8 @@ pub fn run() {
             run_x_account_analysis,
             open_project_in_codex,
             open_external_url,
-            open_chrome_url
+            open_chrome_url,
+            open_x_login
         ])
         .run(tauri::generate_context!())
         .expect("error while running GTM Agent");
@@ -371,21 +414,26 @@ fn verify_x_login(project_path: String, profile_id: Option<String>) -> AppResult
     let path = PathBuf::from(project_path);
     write_x_channel_setup(&path)?;
     let login = check_x_login_in_chrome(profile_id.as_deref())?;
-    if login.is_verified {
-        write_x_channel_status(
-            &path,
-            XLoginStatus::Verified,
-            XAnalysisStatus::NotStarted,
-            login.account_label,
-        )?;
-    } else {
-        write_x_channel_status(
-            &path,
-            XLoginStatus::NeedsLogin,
-            XAnalysisStatus::NotStarted,
-            None,
-        )?;
-    }
+    let login_status = match login.account_status {
+        XAccountStatus::Authenticated => XLoginStatus::Verified,
+        XAccountStatus::NeedsLogin => XLoginStatus::NeedsLogin,
+        _ => XLoginStatus::Unknown,
+    };
+    write_x_channel_status(
+        &path,
+        XChannelStatus {
+            account_status: login.account_status,
+            login_status,
+            analysis_status: XAnalysisStatus::NotStarted,
+            account_label: login.account_label,
+            account_handle: login.account_handle,
+            account_avatar_url: login.account_avatar_url,
+            chrome_profile_id: login.chrome_profile_id,
+            check_method: Some(login.check_method),
+            checked_at: Some(Utc::now().to_rfc3339()),
+            updated_at: Utc::now().to_rfc3339(),
+        },
+    )?;
     load_project(path.to_string_lossy().to_string())
 }
 
@@ -395,16 +443,20 @@ fn run_x_account_analysis(app: tauri::AppHandle, project_path: String) -> AppRes
     let config: ProjectConfig = read_json(&path.join(".gtm-agent/config.json"))?;
     write_x_channel_setup(&path)?;
     let current_status = read_x_channel_status(&path);
-    if current_status.login_status != XLoginStatus::Verified {
+    if current_status.account_status != XAccountStatus::Authenticated {
         return Err(AppError::Invalid(
-            "verify the X login in Chrome before starting account analysis".into(),
+            "verify the X account in Chrome before starting account analysis".into(),
         ));
     }
     write_x_channel_status(
         &path,
-        XLoginStatus::Verified,
-        XAnalysisStatus::Running,
-        current_status.account_label.clone(),
+        XChannelStatus {
+            account_status: XAccountStatus::Authenticated,
+            login_status: XLoginStatus::Verified,
+            analysis_status: XAnalysisStatus::Running,
+            updated_at: Utc::now().to_rfc3339(),
+            ..current_status.clone()
+        },
     )?;
     let run_id = format!("x_run_{}", Utc::now().format("%Y%m%d%H%M%S"));
     let run_path = run_manifest_path(&path, &run_id);
@@ -434,7 +486,13 @@ fn run_x_account_analysis(app: tauri::AppHandle, project_path: String) -> AppRes
             &path,
             &config,
             &run_for_thread,
-            &x_account_analysis_prompt(&config, current_status.account_label.as_deref()),
+            &x_account_analysis_prompt(
+                &config,
+                current_status
+                    .account_label
+                    .as_deref()
+                    .or(current_status.account_handle.as_deref()),
+            ),
             "X account analysis",
         );
         let status_result = match &result {
@@ -443,25 +501,41 @@ fn run_x_account_analysis(app: tauri::AppHandle, project_path: String) -> AppRes
                 if reported.login_status == XLoginStatus::NeedsLogin {
                     write_x_channel_status(
                         &path,
-                        XLoginStatus::NeedsLogin,
-                        XAnalysisStatus::NotStarted,
-                        reported.account_label,
+                        XChannelStatus {
+                            account_status: XAccountStatus::NeedsLogin,
+                            login_status: XLoginStatus::NeedsLogin,
+                            analysis_status: XAnalysisStatus::NotStarted,
+                            updated_at: Utc::now().to_rfc3339(),
+                            ..reported
+                        },
                     )
                 } else {
+                    let account_label = read_x_account_label(&path);
                     write_x_channel_status(
                         &path,
-                        XLoginStatus::Verified,
-                        XAnalysisStatus::Ready,
-                        read_x_account_label(&path),
+                        XChannelStatus {
+                            account_status: XAccountStatus::Authenticated,
+                            login_status: XLoginStatus::Verified,
+                            analysis_status: XAnalysisStatus::Ready,
+                            account_label: account_label.or(reported.account_label),
+                            updated_at: Utc::now().to_rfc3339(),
+                            ..reported
+                        },
                     )
                 }
             }
-            Err(_) => write_x_channel_status(
-                &path,
-                XLoginStatus::Unknown,
-                XAnalysisStatus::Failed,
-                read_x_account_label(&path),
-            ),
+            Err(_) => {
+                let reported = read_x_channel_status(&path);
+                write_x_channel_status(
+                    &path,
+                    XChannelStatus {
+                        analysis_status: XAnalysisStatus::Failed,
+                        account_label: read_x_account_label(&path).or(reported.account_label),
+                        updated_at: Utc::now().to_rfc3339(),
+                        ..reported
+                    },
+                )
+            }
         };
         let _ = status_result;
         let _ = app_handle.emit(
@@ -570,13 +644,15 @@ fn open_chrome_url(url: String) -> AppResult<()> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_x_login(profile_id: Option<String>) -> AppResult<()> {
+    open_chrome_url_in_profile("https://x.com/i/flow/login", profile_id.as_deref())
+}
+
 fn open_chrome_url_in_profile(url: &str, profile_id: Option<&str>) -> AppResult<()> {
     let normalized = normalize_url(url)?;
     if let Some(profile_id) = profile_id.filter(|value| !value.trim().is_empty()) {
-        Command::new("open")
-            .arg("-na")
-            .arg("Google Chrome")
-            .arg("--args")
+        Command::new("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
             .arg(format!("--profile-directory={profile_id}"))
             .arg(normalized)
             .spawn()
@@ -586,10 +662,14 @@ fn open_chrome_url_in_profile(url: &str, profile_id: Option<&str>) -> AppResult<
     open_chrome_url(normalized)
 }
 
-fn read_chrome_profiles() -> AppResult<Vec<ChromeProfile>> {
-    let user_data_dir = dirs::home_dir()
+fn chrome_user_data_dir() -> AppResult<PathBuf> {
+    Ok(dirs::home_dir()
         .ok_or_else(|| AppError::Open("could not locate the home directory".into()))?
-        .join("Library/Application Support/Google/Chrome");
+        .join("Library/Application Support/Google/Chrome"))
+}
+
+fn read_chrome_profiles() -> AppResult<Vec<ChromeProfile>> {
+    let user_data_dir = chrome_user_data_dir()?;
     let local_state_path = user_data_dir.join("Local State");
     if !local_state_path.exists() {
         return Ok(Vec::new());
@@ -623,6 +703,9 @@ fn read_chrome_profiles() -> AppResult<Vec<ChromeProfile>> {
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_string),
+            profile_color: profile
+                .get("profile_highlight_color")
+                .and_then(Value::as_i64),
             is_default: id == "Default",
         })
         .collect::<Vec<_>>();
@@ -635,19 +718,147 @@ fn read_chrome_profiles() -> AppResult<Vec<ChromeProfile>> {
 }
 
 fn check_x_login_in_chrome(profile_id: Option<&str>) -> AppResult<XLoginCheck> {
+    let cookie_status = match check_x_session_cookies(profile_id) {
+        Ok(status) => status,
+        Err(_) => {
+            return Ok(XLoginCheck {
+                account_status: XAccountStatus::Unknown,
+                account_label: None,
+                account_handle: None,
+                account_avatar_url: None,
+                chrome_profile_id: profile_id.map(str::to_string),
+                check_method: "chrome_cookie_probe".into(),
+            });
+        }
+    };
+    let Some(cookie_profile_id) = cookie_status.profile_id else {
+        return Ok(XLoginCheck {
+            account_status: XAccountStatus::Unknown,
+            account_label: None,
+            account_handle: None,
+            account_avatar_url: None,
+            chrome_profile_id: profile_id.map(str::to_string),
+            check_method: "chrome_cookie_probe".into(),
+        });
+    };
+    if !cookie_status.has_session {
+        open_chrome_url_in_profile("https://x.com/i/flow/login", profile_id)?;
+        return Ok(XLoginCheck {
+            account_status: XAccountStatus::NeedsLogin,
+            account_label: None,
+            account_handle: None,
+            account_avatar_url: None,
+            chrome_profile_id: Some(cookie_profile_id),
+            check_method: "chrome_cookie_probe".into(),
+        });
+    }
+
     open_chrome_url_in_profile("https://x.com/home", profile_id)?;
-    thread::sleep(std::time::Duration::from_millis(1600));
+    thread::sleep(std::time::Duration::from_millis(2200));
+    let browser_identity = inspect_x_identity_in_chrome().unwrap_or(None);
+    let account_handle = browser_identity
+        .as_ref()
+        .and_then(|identity| identity.handle.clone());
+    let account_label = browser_identity
+        .as_ref()
+        .and_then(|identity| identity.label.clone())
+        .or_else(|| account_handle.clone())
+        .or_else(|| Some("X account in Chrome".into()));
+    let account_avatar_url = browser_identity.and_then(|identity| identity.avatar_url);
+    Ok(XLoginCheck {
+        account_status: XAccountStatus::Authenticated,
+        account_label,
+        account_handle,
+        account_avatar_url,
+        chrome_profile_id: Some(cookie_profile_id),
+        check_method: "chrome_cookie_probe".into(),
+    })
+}
+
+struct XCookieStatus {
+    profile_id: Option<String>,
+    has_session: bool,
+}
+
+fn check_x_session_cookies(profile_id: Option<&str>) -> AppResult<XCookieStatus> {
+    let user_data_dir = chrome_user_data_dir()?;
+    let resolved_profile_id = profile_id
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            read_chrome_profiles()
+                .ok()
+                .and_then(|profiles| profiles.into_iter().next().map(|profile| profile.id))
+        });
+    let Some(profile_id) = resolved_profile_id else {
+        return Ok(XCookieStatus {
+            profile_id: None,
+            has_session: false,
+        });
+    };
+    let cookies_path = [
+        user_data_dir.join(&profile_id).join("Network/Cookies"),
+        user_data_dir.join(&profile_id).join("Cookies"),
+    ]
+    .into_iter()
+    .find(|path| path.exists());
+    let Some(cookies_path) = cookies_path else {
+        return Ok(XCookieStatus {
+            profile_id: Some(profile_id),
+            has_session: false,
+        });
+    };
+
+    let temp_path = std::env::temp_dir().join(format!(
+        "gtm-agent-chrome-cookies-{}.sqlite",
+        Uuid::new_v4().simple()
+    ));
+    fs::copy(&cookies_path, &temp_path)?;
+    let query = "select count(*) from cookies where host_key in ('.x.com','x.com','.twitter.com','twitter.com') and name = 'auth_token';";
+    let output = Command::new("sqlite3").arg(&temp_path).arg(query).output();
+    let _ = fs::remove_file(&temp_path);
+    let output = output.map_err(|err| AppError::Open(format!("failed to run sqlite3: {err}")))?;
+    if !output.status.success() {
+        return Err(AppError::Open(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    let count = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<i64>()
+        .unwrap_or(0);
+    Ok(XCookieStatus {
+        profile_id: Some(profile_id),
+        has_session: count > 0,
+    })
+}
+
+fn inspect_x_identity_in_chrome() -> AppResult<Option<XBrowserIdentity>> {
     let script = r#"
 tell application "Google Chrome"
-  if not (exists window 1) then return "missing\t\t"
-  set theTab to active tab of front window
-  set currentUrl to URL of theTab
-  set currentTitle to title of theTab
-  set accountLabel to ""
+  if not (exists window 1) then return ""
+  set foundWindow to 0
+  set foundTab to 0
+  repeat with windowIndex from 1 to count windows
+    repeat with tabIndex from 1 to count tabs of window windowIndex
+      set tabUrl to URL of tab tabIndex of window windowIndex
+      if tabUrl starts with "https://x.com" or tabUrl starts with "https://twitter.com" then
+        set foundWindow to windowIndex
+        set foundTab to tabIndex
+        exit repeat
+      end if
+    end repeat
+    if foundWindow is not 0 then exit repeat
+  end repeat
+  if foundWindow is 0 then return ""
+  set index of window foundWindow to 1
+  set active tab index of window 1 to foundTab
+  set theTab to active tab of window 1
+  set accountJson to ""
   try
-    set accountLabel to execute theTab javascript "(() => { const blocked = new Set(['home','explore','notifications','messages','jobs','i','settings','compose','search','login','flow']); const links = Array.from(document.querySelectorAll('a[href^=\"/\"]')); const candidates = links.map(a => (a.getAttribute('href') || '').split('?')[0]).filter(h => /^\\/[A-Za-z0-9_]{1,15}$/.test(h)).map(h => h.slice(1)).filter(h => !blocked.has(h.toLowerCase())); return candidates.length ? '@' + candidates[0] : ''; })()"
+    set accountJson to execute theTab javascript "(() => { const cleanHandle = (value) => { const match = String(value || '').match(/@?([A-Za-z0-9_]{1,15})/); return match ? '@' + match[1] : ''; }; const profileLink = document.querySelector('a[data-testid=\"AppTabBar_Profile_Link\"]'); const handleFromLink = profileLink ? cleanHandle((profileLink.getAttribute('href') || '').split('/').filter(Boolean).pop()) : ''; const switcher = document.querySelector('[data-testid=\"SideNav_AccountSwitcher_Button\"]'); const switcherText = switcher ? switcher.innerText : ''; const handleFromText = cleanHandle((switcherText.match(/@[A-Za-z0-9_]{1,15}/) || [''])[0]); const handle = handleFromLink || handleFromText; const lines = switcherText.split('\\n').map(v => v.trim()).filter(Boolean); const label = lines.find(v => !v.startsWith('@')) || handle || ''; const avatar = switcher ? (switcher.querySelector('img')?.src || '') : ''; return JSON.stringify({ handle, label, avatarUrl: avatar }); })()"
   end try
-  return currentUrl & "\t" & currentTitle & "\t" & accountLabel
+  return accountJson
 end tell
 "#;
     let output = Command::new("osascript")
@@ -660,21 +871,12 @@ end tell
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         ));
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut parts = stdout.trim().split('\t');
-    let url = parts.next().unwrap_or_default().to_lowercase();
-    let _title = parts.next().unwrap_or_default();
-    let account = parts
-        .next()
-        .map(str::trim)
-        .filter(|value| value.starts_with('@') && value.len() > 1)
-        .map(str::to_string);
-    let is_login_route = url.contains("/login") || url.contains("/i/flow/login");
-    let is_x_route = url.starts_with("https://x.com") || url.starts_with("https://twitter.com");
-    Ok(XLoginCheck {
-        is_verified: is_x_route && !is_login_route,
-        account_label: account,
-    })
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        return Ok(None);
+    }
+    let identity: XBrowserIdentity = serde_json::from_str(&stdout)?;
+    Ok(Some(identity))
 }
 
 fn execute_initial_analysis(
@@ -1197,9 +1399,15 @@ fn read_channel_setups(project_path: &Path) -> Vec<ChannelSetup> {
             id: "x".into(),
             name: "X".into(),
             status: ChannelSetupStatus::NotConfigured,
+            account_status: XAccountStatus::NotConfigured,
             login_status: XLoginStatus::Unknown,
             analysis_status: XAnalysisStatus::NotStarted,
             account_label: None,
+            account_handle: None,
+            account_avatar_url: None,
+            chrome_profile_id: None,
+            check_method: None,
+            checked_at: None,
             path: x_path.to_string_lossy().to_string(),
             files: Vec::new(),
         }];
@@ -1207,13 +1415,14 @@ fn read_channel_setups(project_path: &Path) -> Vec<ChannelSetup> {
 
     let channel_status = read_x_channel_status(project_path);
     let setup_status = match (
-        &channel_status.login_status,
+        &channel_status.account_status,
         &channel_status.analysis_status,
     ) {
-        (XLoginStatus::Verified, XAnalysisStatus::Running) => ChannelSetupStatus::Analyzing,
-        (XLoginStatus::Verified, XAnalysisStatus::Ready) => ChannelSetupStatus::Ready,
+        (XAccountStatus::Authenticated, XAnalysisStatus::Running) => ChannelSetupStatus::Analyzing,
+        (XAccountStatus::Authenticated, XAnalysisStatus::Ready) => ChannelSetupStatus::Ready,
         (_, XAnalysisStatus::Failed) => ChannelSetupStatus::Failed,
-        _ => ChannelSetupStatus::NeedsLogin,
+        (XAccountStatus::NeedsLogin, _) => ChannelSetupStatus::NeedsLogin,
+        _ => ChannelSetupStatus::NotConfigured,
     };
     let files = ["profile.md", "rules.md", "examples.md", "voice.md"]
         .iter()
@@ -1225,9 +1434,15 @@ fn read_channel_setups(project_path: &Path) -> Vec<ChannelSetup> {
         id: "x".into(),
         name: "X".into(),
         status: setup_status,
+        account_status: channel_status.account_status,
         login_status: channel_status.login_status,
         analysis_status: channel_status.analysis_status,
         account_label: channel_status.account_label,
+        account_handle: channel_status.account_handle,
+        account_avatar_url: channel_status.account_avatar_url,
+        chrome_profile_id: channel_status.chrome_profile_id,
+        check_method: channel_status.check_method,
+        checked_at: channel_status.checked_at,
         path: x_path.to_string_lossy().to_string(),
         files,
     }]
@@ -1270,9 +1485,18 @@ fn write_x_channel_setup(project_path: &Path) -> AppResult<()> {
     if !channel_path.join("status.json").exists() {
         write_x_channel_status(
             project_path,
-            XLoginStatus::Unknown,
-            XAnalysisStatus::NotStarted,
-            None,
+            XChannelStatus {
+                account_status: XAccountStatus::NotConfigured,
+                login_status: XLoginStatus::Unknown,
+                analysis_status: XAnalysisStatus::NotStarted,
+                account_label: None,
+                account_handle: None,
+                account_avatar_url: None,
+                chrome_profile_id: None,
+                check_method: None,
+                checked_at: None,
+                updated_at: Utc::now().to_rfc3339(),
+            },
         )?;
     }
     Ok(())
@@ -1286,33 +1510,29 @@ fn read_x_channel_status(project_path: &Path) -> XChannelStatus {
         }
     }
     XChannelStatus {
+        account_status: XAccountStatus::NotConfigured,
         login_status: XLoginStatus::Unknown,
         analysis_status: XAnalysisStatus::NotStarted,
         account_label: None,
+        account_handle: None,
+        account_avatar_url: None,
+        chrome_profile_id: None,
+        check_method: None,
+        checked_at: None,
         updated_at: Utc::now().to_rfc3339(),
     }
 }
 
-fn write_x_channel_status(
-    project_path: &Path,
-    login_status: XLoginStatus,
-    analysis_status: XAnalysisStatus,
-    account_label: Option<String>,
-) -> AppResult<()> {
+fn write_x_channel_status(project_path: &Path, status: XChannelStatus) -> AppResult<()> {
     write_json_pretty(
         &project_path.join(".gtm-agent/channels/x/status.json"),
-        &XChannelStatus {
-            login_status,
-            analysis_status,
-            account_label,
-            updated_at: Utc::now().to_rfc3339(),
-        },
+        &status,
     )
 }
 
 fn read_x_account_label(project_path: &Path) -> Option<String> {
     let status = read_x_channel_status(project_path);
-    status.account_label.or_else(|| {
+    status.account_label.or(status.account_handle).or_else(|| {
         let profile = fs::read_to_string(project_path.join(".gtm-agent/channels/x/profile.md"))
             .unwrap_or_default();
         profile
@@ -1717,9 +1937,15 @@ Keep the draft-first operating rules: Codex may find opportunities and draft rep
 5. `status.json`
 Write valid JSON with this exact shape:
 {{
+  "accountStatus": "authenticated",
   "loginStatus": "verified",
   "analysisStatus": "ready",
   "accountLabel": "@handle or display name",
+  "accountHandle": "@handle when known",
+  "accountAvatarUrl": "avatar URL when known or null",
+  "chromeProfileId": "Chrome profile id selected by the app",
+  "checkMethod": "chrome_cookie_probe",
+  "checkedAt": "ISO-8601 timestamp from the app if already present",
   "updatedAt": "ISO-8601 timestamp"
 }}
 
@@ -2194,7 +2420,8 @@ mod tests {
         }
         let setups = read_channel_setups(&project_path);
         assert_eq!(setups.len(), 1);
-        assert_eq!(setups[0].status, ChannelSetupStatus::NeedsLogin);
+        assert_eq!(setups[0].status, ChannelSetupStatus::NotConfigured);
+        assert_eq!(setups[0].account_status, XAccountStatus::NotConfigured);
         assert_eq!(setups[0].login_status, XLoginStatus::Unknown);
         assert_eq!(setups[0].analysis_status, XAnalysisStatus::NotStarted);
         assert!(setups[0].files.contains(&"voice.md".into()));

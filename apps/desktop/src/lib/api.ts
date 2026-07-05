@@ -74,4 +74,7 @@ export const api = {
   openChromeUrl(url: string) {
     return call<void>("open_chrome_url", { url });
   },
+  openXLogin(profileId?: string | null) {
+    return call<void>("open_x_login", { profileId });
+  },
 };
