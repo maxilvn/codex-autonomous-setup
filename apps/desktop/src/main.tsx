@@ -399,6 +399,7 @@ function ProjectView({
             message: "Analysis updates will appear here.",
           },
         ];
+  const agentOutput = agentOutputActivity(activity);
   const isAnalysisComplete =
     !isInitialAnalysisRunning && project.docs.every(hasDocumentContent);
   const runLabel = project.docs.some(hasDocumentContent)
@@ -623,20 +624,27 @@ function ProjectView({
           </div>
         </aside>
 
-        <section className="panel activity-card" aria-hidden={showChannels}>
+        <section
+          className="panel activity-card"
+          aria-hidden={showChannels && !isCompanyPanelOpen}
+        >
           <div className="activity-head">
-            <h2>Brand Analysis</h2>
+            <h2>Codex Output</h2>
           </div>
           <div className="activity-list">
-            {activity.map((item, index) => (
+            {agentOutput.map((item, index) => (
               <article
                 className={`activity-item ${activityClass(item.kind)}`}
                 key={`${item.title}-${index}`}
               >
-                <span className="activity-title">{item.title}</span>
                 <p>{item.message}</p>
               </article>
             ))}
+            {!agentOutput.length && !isInitialAnalysisRunning ? (
+              <article className="activity-item">
+                <p>Codex output will appear here during analysis.</p>
+              </article>
+            ) : null}
             {isInitialAnalysisRunning ? (
               <div className="analyzing-shimmer">{runLabel}</div>
             ) : null}
@@ -659,7 +667,7 @@ function ProjectView({
 
         <section
           className="channel-setup"
-          aria-hidden={!showChannels || showDashboard}
+          aria-hidden={!showChannels || showDashboard || isCompanyPanelOpen}
           aria-label="Marketing channel setup"
         >
           <div className="channel-header">
@@ -916,7 +924,8 @@ function XChannelSetupPanel({
   const shouldShowAnalysisOutput =
     hasSelectedProfileForRun &&
     hasVerifiedSelectedProfile &&
-    (isRunActive || activity.length > 0 || isReady);
+    (isRunActive || agentOutputActivity(activity).length > 0 || isReady);
+  const agentOutput = agentOutputActivity(activity);
   function useChromeProfile(profileId: string) {
     onSelectChromeProfile(profileId);
     setHasSelectedProfileForRun(false);
@@ -1088,8 +1097,8 @@ function XChannelSetupPanel({
           </div>
           <div className="x-codex-card">
             <div className="x-codex-output">
-              {activity.length ? (
-                activity.slice(-6).map((item, index) => (
+              {agentOutput.length ? (
+                agentOutput.slice(-6).map((item, index) => (
                   <article
                     className="x-codex-item"
                     key={`${item.title}-${index}`}
@@ -1346,6 +1355,15 @@ function hasDocumentContent(doc: ContextDoc) {
 function activityClass(kind: string) {
   if (kind === "message" || kind === "tool" || kind === "idle") return kind;
   return "other";
+}
+
+function agentOutputActivity(activity: RunActivity[]) {
+  return activity.filter(
+    (item) =>
+      item.kind !== "tool" &&
+      item.kind !== "idle" &&
+      item.message.trim().length > 0,
+  );
 }
 
 function extractProductDescription(docs: ContextDoc[]) {
