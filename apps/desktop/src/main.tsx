@@ -303,6 +303,10 @@ function ProjectView({
   }
 
   async function verifyXAccountInChrome(profileId = selectedChromeProfileId) {
+    if (!profileId) {
+      setChannelError("Choose a Chrome profile first.");
+      return;
+    }
     setChannelError(null);
     setCheckingChannelId("x");
     try {
@@ -720,10 +724,12 @@ function XChannelSetupPanel({
     React.useState(false);
   const isReady = setup?.status === "ready";
   const isVerified = setup?.accountStatus === "authenticated";
+  const hasVerifiedSelectedProfile =
+    isVerified && setup?.chromeProfileId === selectedChromeProfileId;
   const needsLogin = setup?.accountStatus === "needs_login";
   const isUnknown = setup?.accountStatus === "unknown";
   const isRunActive =
-    isVerified &&
+    hasVerifiedSelectedProfile &&
     (isAnalyzing ||
       run?.status === "running" ||
       setup?.analysisStatus === "running");
@@ -733,7 +739,7 @@ function XChannelSetupPanel({
   );
   const accountName =
     setup?.accountHandle ?? setup?.accountLabel ?? "X account in Chrome";
-  const loginLabel = isVerified
+  const loginLabel = hasVerifiedSelectedProfile
     ? `Signed in as ${accountName}`
     : needsLogin
       ? "No signed-in X account found in this Chrome profile."
@@ -748,16 +754,16 @@ function XChannelSetupPanel({
       ? "Analyzing..."
       : needsLogin
         ? "Sign in to X"
-        : isVerified && !hasSelectedProfileForRun
+        : hasVerifiedSelectedProfile && !hasSelectedProfileForRun
           ? "Select"
-          : isVerified
+          : hasVerifiedSelectedProfile
             ? isReady
               ? "Ready"
               : "Check again"
             : "Select";
   const shouldShowAnalysisOutput =
     hasSelectedProfileForRun &&
-    isVerified &&
+    hasVerifiedSelectedProfile &&
     (isRunActive || activity.length > 0 || isReady);
   function useChromeProfile(profileId: string) {
     onSelectChromeProfile(profileId);
