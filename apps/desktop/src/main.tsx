@@ -451,7 +451,9 @@ function ProjectView({
     }
   }
 
-  async function verifyXAccountInChrome(profileId = selectedChromeProfileId) {
+  async function selectXProfileForAnalysis(
+    profileId = selectedChromeProfileId,
+  ) {
     if (!profileId) {
       setChannelError("Choose a Chrome profile first.");
       return;
@@ -729,8 +731,8 @@ function ProjectView({
                         selectedChromeProfileId={selectedChromeProfileId}
                         isLoadingChromeProfiles={isLoadingChromeProfiles}
                         onSelectChromeProfile={setSelectedChromeProfileId}
-                        onVerify={(profileId) =>
-                          void verifyXAccountInChrome(profileId)
+                        onSelectForAnalysis={(profileId) =>
+                          void selectXProfileForAnalysis(profileId)
                         }
                         onOpenLogin={(profileId) => void openXLogin(profileId)}
                         onOpenFile={(fileName) =>
@@ -1052,7 +1054,7 @@ function XChannelSetupPanel({
   selectedChromeProfileId,
   isLoadingChromeProfiles,
   onSelectChromeProfile,
-  onVerify,
+  onSelectForAnalysis,
   onOpenLogin,
   onOpenFile,
   embedded = false,
@@ -1068,7 +1070,7 @@ function XChannelSetupPanel({
   selectedChromeProfileId: string | null;
   isLoadingChromeProfiles: boolean;
   onSelectChromeProfile: (profileId: string) => void;
-  onVerify: (profileId?: string | null) => void;
+  onSelectForAnalysis: (profileId?: string | null) => void;
   onOpenLogin: (profileId?: string | null) => void;
   onOpenFile: (fileName: string) => void;
   embedded?: boolean;
@@ -1082,11 +1084,12 @@ function XChannelSetupPanel({
     isVerified && setup?.chromeProfileId === selectedChromeProfileId;
   const needsLogin = setup?.accountStatus === "needs_login";
   const isUnknown = setup?.accountStatus === "unknown";
+  const hasConfirmedSelectedProfile =
+    hasSelectedProfileForRun || Boolean(run?.status === "running");
   const isRunActive =
+    hasConfirmedSelectedProfile &&
     hasVerifiedSelectedProfile &&
-    (isAnalyzing ||
-      run?.status === "running" ||
-      setup?.analysisStatus === "running");
+    (isAnalyzing || run?.status === "running");
   const isLoginActionBusy = isChecking || isRunActive || isConfiguring;
   const selectedChromeProfile = chromeProfiles.find(
     (profile) => profile.id === selectedChromeProfileId,
@@ -1094,8 +1097,7 @@ function XChannelSetupPanel({
   const selectedProfileHasXSession = Boolean(
     selectedChromeProfile?.hasXSession,
   );
-  const accountName =
-    setup?.accountHandle ?? setup?.accountLabel ?? "X account in Chrome";
+  const accountName = xAccountDisplayName(setup);
   const loginLabel = hasVerifiedSelectedProfile
     ? `Signed in as ${accountName}`
     : needsLogin || (selectedChromeProfile && !selectedProfileHasXSession)
@@ -1162,9 +1164,9 @@ function XChannelSetupPanel({
                   <p>{profileSubtitle(selectedChromeProfile)}</p>
                   {selectedProfileHasXSession ? (
                     <p className="x-selected-account">
-                      {hasVerifiedSelectedProfile && setup?.accountHandle
-                        ? setup.accountHandle
-                        : "Signed in to X"}
+                      {hasVerifiedSelectedProfile
+                        ? xAccountDisplayName(setup)
+                        : "X session found"}
                     </p>
                   ) : null}
                 </div>
@@ -1202,7 +1204,7 @@ function XChannelSetupPanel({
                 type="button"
                 onClick={() => {
                   setHasSelectedProfileForRun(true);
-                  onVerify();
+                  onSelectForAnalysis(selectedChromeProfileId);
                 }}
                 disabled={isLoginActionBusy}
               >
@@ -1240,26 +1242,31 @@ function XChannelSetupPanel({
                 <div className="profile-picker-list">
                   {chromeProfiles.map((profile) => (
                     <button
-                      className={
+                      className={[
+                        "profile-picker-row",
                         profile.id === selectedChromeProfileId
                           ? "is-selected"
-                          : ""
-                      }
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
                       key={profile.id}
                       type="button"
                       onClick={() => useChromeProfile(profile.id)}
                     >
                       <ChromeProfileAvatar profile={profile} />
-                      <div>
-                        <strong>
-                          {profile.name}
+                      <div className="profile-picker-main">
+                        <div className="profile-picker-title">
+                          <strong>{profile.name}</strong>
                           {profile.isRecommended ? (
                             <span className="profile-recommended">
-                              Recommended
+                              Suggested
                             </span>
                           ) : null}
-                        </strong>
-                        <span>{profileSubtitle(profile)}</span>
+                        </div>
+                        <span className="profile-picker-email">
+                          {profileSubtitle(profile)}
+                        </span>
                         <span
                           className={
                             profile.hasXSession
@@ -1267,10 +1274,10 @@ function XChannelSetupPanel({
                               : "profile-x-status"
                           }
                         >
-                          {profileXStatusLabel(profile)}
+                          {profileXAccountLabel(profile, setup)}
                         </span>
                       </div>
-                      <em>
+                      <em className="profile-picker-action">
                         {profile.id === selectedChromeProfileId
                           ? "Selected"
                           : "Choose"}
@@ -1404,8 +1411,21 @@ function profileSubtitle(profile: ChromeProfile) {
   );
 }
 
-function profileXStatusLabel(profile: ChromeProfile) {
-  return profile.hasXSession ? "Signed in to X" : "Not signed in";
+function profileXAccountLabel(
+  profile: ChromeProfile,
+  setup: ChannelSetup | null,
+) {
+  if (
+    setup?.accountStatus === "authenticated" &&
+    setup.chromeProfileId === profile.id
+  ) {
+    return xAccountDisplayName(setup);
+  }
+  return profile.hasXSession ? "X session found" : "Not signed in";
+}
+
+function xAccountDisplayName(setup: ChannelSetup | null) {
+  return setup?.accountHandle ?? setup?.accountLabel ?? "X session found";
 }
 
 function profileInitials(profile: ChromeProfile) {

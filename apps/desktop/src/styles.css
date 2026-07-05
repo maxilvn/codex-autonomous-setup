@@ -1127,10 +1127,10 @@ code {
 .x-login-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
+  align-items: end;
+  gap: 16px;
   border-top: 1px solid #f0f0f0;
-  padding-top: 12px;
+  padding-top: 16px;
 }
 
 .x-login-card strong {
@@ -1149,12 +1149,12 @@ code {
 
 .x-login-copy {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .x-login-card .x-profile-note {
   margin: 0;
-  color: #8a8a8a;
+  color: #777777;
   font-size: 12px;
   line-height: 18px;
 }
@@ -1163,13 +1163,14 @@ code {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding-bottom: 2px;
 }
 
 .x-selected-profile {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .x-selected-profile span {
@@ -1188,7 +1189,7 @@ code {
 }
 
 .x-selected-profile .x-selected-account {
-  color: #397546;
+  color: #2f6f42;
   font-size: 12px;
   line-height: 17px;
   font-weight: 600;
@@ -1239,11 +1240,11 @@ code {
 
 .profile-picker-modal {
   display: grid;
-  gap: 16px;
-  width: min(520px, 100%);
+  gap: 14px;
+  width: min(560px, 100%);
   border: 1px solid #e8e8e8;
   border-radius: 10px;
-  padding: 18px;
+  padding: 18px 18px 16px;
   background: #ffffff;
   box-shadow: 0 20px 70px #0000001c;
   animation: modal-content-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -1266,38 +1267,54 @@ code {
 
 .profile-picker-list {
   display: grid;
-  gap: 8px;
+  gap: 7px;
 }
 
-.profile-picker-list button {
+.profile-picker-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  min-height: 72px;
+  gap: 14px;
+  min-height: 68px;
   border: 1px solid #e8e8e8;
   border-radius: 8px;
-  padding: 10px;
+  padding: 10px 12px;
   background: #ffffff;
   text-align: left;
 }
 
-.profile-picker-list button.is-selected {
+.profile-picker-row:hover {
+  border-color: #d8d8d8;
+  background: #fcfcfc;
+}
+
+.profile-picker-row.is-selected {
   border-color: #171717;
 }
 
-.profile-picker-list strong,
-.profile-picker-list span {
+.profile-picker-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.profile-picker-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.profile-picker-title strong,
+.profile-picker-email,
+.profile-x-status {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.profile-picker-list strong {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.profile-picker-title strong {
   color: #171717;
   font-size: 14px;
   line-height: 19px;
@@ -1307,57 +1324,33 @@ code {
 .profile-recommended {
   border: 1px solid #e6e6e6;
   border-radius: 999px;
-  padding: 2px 7px;
+  padding: 1px 6px;
   color: #666666;
   background: #fafafa;
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 10px;
+  line-height: 13px;
   font-weight: 600;
+  flex: 0 0 auto;
 }
 
-.profile-picker-list span {
+.profile-picker-email {
   color: #737373;
   font-size: 13px;
   line-height: 18px;
 }
 
-.profile-picker-list .profile-x-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: max-content;
-  margin-top: 4px;
+.profile-x-status {
   color: #888888;
-  font-size: 11px;
-  line-height: 15px;
+  font-size: 12px;
+  line-height: 17px;
   font-weight: 600;
 }
 
-.profile-picker-list .profile-x-status::before {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: #cfcfcf;
-  content: "";
+.profile-x-status.is-found {
+  color: #2f6f42;
 }
 
-.profile-picker-list .profile-x-status.is-found {
-  color: #397546;
-}
-
-.profile-picker-list .profile-x-status.is-found::before {
-  background: #42a85b;
-}
-
-.profile-picker-list .profile-recommended {
-  display: inline-flex;
-  overflow: visible;
-  color: #666666;
-  text-overflow: clip;
-  white-space: nowrap;
-}
-
-.profile-picker-list em {
+.profile-picker-action {
   color: #666666;
   font-size: 12px;
   line-height: 18px;
