@@ -238,10 +238,20 @@ function AgentSelectionStep({
   onSelect: (providerId: string) => void;
   onUnavailable: (title: string) => void;
 }) {
+  const [selectedAgentId, setSelectedAgentId] = React.useState(
+    selectedProvider?.id ?? "codex",
+  );
   const providerIds = new Set(providers.map((provider) => provider.id));
   const providerOptions = AGENT_PROVIDER_OPTIONS.filter(
     (option) => option.id === "codex" || providerIds.has(option.id),
   );
+  const selectedOption =
+    providerOptions.find((option) => option.id === selectedAgentId) ??
+    providerOptions.find((option) => option.id === "codex");
+
+  React.useEffect(() => {
+    setSelectedAgentId(selectedProvider?.id ?? "codex");
+  }, [selectedProvider?.id]);
 
   return (
     <section className="agent-onboarding">
@@ -254,15 +264,14 @@ function AgentSelectionStep({
         </p>
       </div>
 
-      <div className="agent-provider-grid">
+      <div className="agent-provider-list">
         {providerOptions.map((option) => {
           const isCodex = option.id === "codex";
-          const isSelected =
-            selectedProvider?.id === option.id || (!selectedProvider && isCodex);
+          const isSelected = selectedAgentId === option.id;
           return (
             <button
               className={[
-                "agent-provider-card",
+                "agent-provider-row",
                 isSelected ? "is-selected" : "",
                 !isCodex ? "is-disabled" : "",
               ]
@@ -270,19 +279,24 @@ function AgentSelectionStep({
                 .join(" ")}
               key={option.id}
               type="button"
-              onClick={() =>
-                isCodex ? onSelect(option.id) : onUnavailable(option.title)
-              }
+              onClick={() => {
+                if (!isCodex) {
+                  onUnavailable(option.title);
+                  return;
+                }
+                setSelectedAgentId(option.id);
+              }}
               disabled={busy}
             >
-              <span className={`agent-provider-icon icon-${option.id}`}>
-                {option.icon}
+              <img
+                alt=""
+                className="agent-provider-icon"
+                src={option.faviconUrl}
+              />
+              <strong>{option.title}</strong>
+              <span className={isCodex ? "agent-ready" : "agent-unavailable"}>
+                {isCodex ? "Available" : "Not available yet"}
               </span>
-              <span>
-                <strong>{option.title}</strong>
-                <em>{isCodex ? "Available now" : "Not available yet"}</em>
-              </span>
-              <small>{option.caption}</small>
             </button>
           );
         })}
@@ -292,8 +306,12 @@ function AgentSelectionStep({
         <button className="secondary" type="button" onClick={onBack}>
           Back
         </button>
-        <button type="button" onClick={() => onSelect("codex")} disabled={busy}>
-          {busy ? "Starting..." : "Use Codex"}
+        <button
+          type="button"
+          onClick={() => onSelect(selectedOption?.id ?? "codex")}
+          disabled={busy || selectedOption?.id !== "codex"}
+        >
+          {busy ? "Starting..." : "Select"}
         </button>
       </div>
     </section>
@@ -304,38 +322,33 @@ const AGENT_PROVIDER_OPTIONS = [
   {
     id: "codex",
     title: "Codex",
-    icon: "⌁",
-    caption: "OpenAI Codex through ACP",
+    faviconUrl: "https://www.google.com/s2/favicons?domain=openai.com&sz=64",
   },
   {
     id: "claude",
     title: "Claude Code",
-    icon: "CC",
-    caption: "ACP adapter planned",
+    faviconUrl: "https://www.google.com/s2/favicons?domain=claude.ai&sz=64",
   },
   {
     id: "cursor",
     title: "Cursor",
-    icon: "⌘",
-    caption: "Cursor agent ACP",
+    faviconUrl: "https://www.google.com/s2/favicons?domain=cursor.com&sz=64",
   },
   {
     id: "devin",
     title: "Devin",
-    icon: "D",
-    caption: "ACP provider planned",
+    faviconUrl: "https://www.google.com/s2/favicons?domain=devin.ai&sz=64",
   },
   {
     id: "gemini",
     title: "Gemini",
-    icon: "G",
-    caption: "Gemini ACP mode",
+    faviconUrl:
+      "https://www.google.com/s2/favicons?domain=gemini.google.com&sz=64",
   },
   {
     id: "copilot",
     title: "Copilot",
-    icon: "CP",
-    caption: "Copilot ACP mode",
+    faviconUrl: "https://www.google.com/s2/favicons?domain=github.com&sz=64",
   },
 ];
 

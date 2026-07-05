@@ -156,7 +156,7 @@ input:focus {
 .agent-onboarding {
   display: grid;
   justify-items: center;
-  gap: 22px;
+  gap: 18px;
   padding: 18px 0 0;
 }
 
@@ -168,124 +168,83 @@ input:focus {
   line-height: 21px;
 }
 
-.agent-provider-grid {
+.agent-provider-list {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  width: min(720px, 100%);
+  gap: 8px;
+  width: min(480px, 100%);
 }
 
-.agent-provider-card {
+.agent-provider-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  min-height: 112px;
+  gap: 11px;
+  min-height: 54px;
   border: 1px solid #e7e7e7;
   border-radius: 8px;
-  padding: 14px;
+  padding: 9px 11px;
   color: #171717;
   background: #ffffff;
   text-align: left;
   box-shadow: 0 1px 3px #0000000a;
 }
 
-.agent-provider-card:hover {
+.agent-provider-row:hover {
   border-color: #d2d2d2;
   background: #fbfbfb;
 }
 
-.agent-provider-card.is-selected {
+.agent-provider-row.is-selected {
   border-color: #171717;
   box-shadow: inset 0 0 0 1px #171717;
 }
 
-.agent-provider-card.is-disabled {
+.agent-provider-row.is-disabled {
   color: #8f8f8f;
   background: #fafafa;
 }
 
-.agent-provider-card.is-disabled:hover {
+.agent-provider-row.is-disabled:hover {
   border-color: #e7e7e7;
   background: #fafafa;
 }
 
-.agent-provider-card span:not(.agent-provider-icon) {
-  display: grid;
-  gap: 3px;
-}
-
-.agent-provider-card strong {
+.agent-provider-row strong {
+  min-width: 0;
   font-size: 14px;
   line-height: 19px;
   font-weight: 650;
 }
 
-.agent-provider-card em {
-  color: #737373;
+.agent-ready,
+.agent-unavailable {
   font-size: 12px;
   line-height: 17px;
-  font-style: normal;
+  white-space: nowrap;
 }
 
-.agent-provider-card small {
-  grid-column: 1 / -1;
-  color: #666666;
-  font-size: 12px;
-  line-height: 17px;
+.agent-ready {
+  color: #1f7a38;
+}
+
+.agent-unavailable {
+  color: #8a8a8a;
 }
 
 .agent-provider-icon {
-  display: inline-grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
+  width: 28px;
+  height: 28px;
   border: 1px solid #e6e6e6;
-  border-radius: 8px;
-  color: #171717;
+  border-radius: 7px;
   background: #ffffff;
-  font-size: 12px;
-  line-height: 1;
-  font-weight: 700;
-}
-
-.icon-codex {
-  color: #ffffff;
-  background: #111111;
-  border-color: #111111;
-  font-size: 18px;
-}
-
-.icon-claude {
-  color: #7a3d1f;
-  background: #fff6ef;
-}
-
-.icon-cursor {
-  color: #164c35;
-  background: #f1faf5;
-}
-
-.icon-devin {
-  color: #3730a3;
-  background: #f4f4ff;
-}
-
-.icon-gemini {
-  color: #0b57d0;
-  background: #eef5ff;
-}
-
-.icon-copilot {
-  color: #2f5233;
-  background: #eff8ee;
+  object-fit: contain;
 }
 
 .agent-onboarding-actions {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  width: min(720px, 100%);
+  width: min(480px, 100%);
 }
 
 .url-bar {
@@ -1693,8 +1652,7 @@ code {
   }
 
   .url-bar,
-  .analysis-grid,
-  .agent-provider-grid {
+  .analysis-grid {
     grid-template-columns: 1fr;
   }
 
