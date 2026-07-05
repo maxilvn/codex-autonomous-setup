@@ -385,6 +385,7 @@ function ProjectView({
   const [isLoadingChromeProfiles, setIsLoadingChromeProfiles] =
     React.useState(false);
   const [channelError, setChannelError] = React.useState<string | null>(null);
+  const activityListRef = React.useRef<HTMLDivElement | null>(null);
   const run = project.latestRun;
   const isInitialAnalysisRun = run?.kind === "initial_analysis";
   const isInitialAnalysisRunning =
@@ -499,6 +500,12 @@ function ProjectView({
   React.useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
   }, [onboardingStep]);
+
+  React.useEffect(() => {
+    const list = activityListRef.current;
+    if (!list) return;
+    list.scrollTop = list.scrollHeight;
+  }, [agentOutput.length, agentOutput.at(-1)?.message, isInitialAnalysisRunning]);
 
   React.useEffect(() => {
     if (activeChannelId !== "x") {
@@ -631,7 +638,7 @@ function ProjectView({
           <div className="activity-head">
             <h2>Codex Output</h2>
           </div>
-          <div className="activity-list">
+          <div className="activity-list" ref={activityListRef}>
             {agentOutput.map((item, index) => (
               <article
                 className={`activity-item ${activityClass(item.kind)}`}
@@ -645,10 +652,12 @@ function ProjectView({
                 <p>Codex output will appear here during analysis.</p>
               </article>
             ) : null}
-            {isInitialAnalysisRunning ? (
-              <div className="analyzing-shimmer">{runLabel}</div>
-            ) : null}
           </div>
+          {isInitialAnalysisRunning ? (
+            <div className="activity-status">
+              <div className="analyzing-shimmer">{runLabel}</div>
+            </div>
+          ) : null}
           {run?.error ? <p className="run-error">{run.error}</p> : null}
           {isAnalysisComplete && !run?.error ? (
             <div className="activity-actions">
@@ -1362,8 +1371,26 @@ function agentOutputActivity(activity: RunActivity[]) {
     (item) =>
       item.kind !== "tool" &&
       item.kind !== "idle" &&
-      item.message.trim().length > 0,
+      shouldShowAgentOutput(item.message),
   );
+}
+
+function shouldShowAgentOutput(message: string) {
+  const text = message.trim().replace(/\s+/g, " ");
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return ![
+    "warning: code mode is enabled",
+    "warning: skill descriptions were shortened",
+    "i’m using the local `gtm-source-doc-rewrite` workflow",
+    "i'm using the local `gtm-source-doc-rewrite` workflow",
+    "i’m using the local workflow",
+    "i'm using the local workflow",
+    "i found the recurring gtm rewrite workflow note",
+    "i’ll first refresh the project-specific gtm workflow notes",
+    "i'll first refresh the project-specific gtm workflow notes",
+    "the workspace contract is narrow:",
+  ].some((prefix) => lower.startsWith(prefix));
 }
 
 function extractProductDescription(docs: ContextDoc[]) {

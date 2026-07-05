@@ -1698,6 +1698,7 @@ fn read_run_activity(log_path: &Path) -> AppResult<Vec<RunActivity>> {
     let file = File::open(log_path)?;
     let mut activity = Vec::new();
     let mut message_deltas = HashMap::<String, String>::new();
+    let mut message_order = Vec::<String>::new();
     let mut completed_messages = HashSet::<String>::new();
     let mut tool_titles = HashMap::<String, String>::new();
 
@@ -1713,6 +1714,7 @@ fn read_run_activity(log_path: &Path) -> AppResult<Vec<RunActivity>> {
                 value.pointer("/params/update").unwrap_or(&Value::Null),
                 &mut activity,
                 &mut message_deltas,
+                &mut message_order,
                 &mut tool_titles,
             ),
             Some("item/agentMessage/delta") => {
@@ -1727,6 +1729,9 @@ fn read_run_activity(log_path: &Path) -> AppResult<Vec<RunActivity>> {
                     .pointer("/params/itemId")
                     .and_then(Value::as_str)
                     .unwrap_or("codex");
+                if !message_deltas.contains_key(message_id) {
+                    message_order.push(message_id.to_string());
+                }
                 message_deltas
                     .entry(message_id.to_string())
                     .or_default()
@@ -1736,17 +1741,21 @@ fn read_run_activity(log_path: &Path) -> AppResult<Vec<RunActivity>> {
                 value.pointer("/params/item").unwrap_or(&Value::Null),
                 &mut activity,
                 &mut message_deltas,
+                &mut message_order,
                 &mut completed_messages,
             ),
             _ => {}
         }
     }
 
-    for (item_id, text) in message_deltas {
+    for item_id in message_order {
         if completed_messages.contains(&item_id) {
             continue;
         }
-        if !text.trim().is_empty() {
+        let Some(text) = message_deltas.get(&item_id) else {
+            continue;
+        };
+        if should_show_agent_output(text) {
             activity.push(RunActivity {
                 kind: "message".into(),
                 title: "Agent output".into(),
@@ -1763,6 +1772,7 @@ fn read_acp_activity_update(
     update: &Value,
     activity: &mut Vec<RunActivity>,
     message_deltas: &mut HashMap<String, String>,
+    message_order: &mut Vec<String>,
     tool_titles: &mut HashMap<String, String>,
 ) {
     match update.get("sessionUpdate").and_then(Value::as_str) {
@@ -1778,6 +1788,9 @@ fn read_acp_activity_update(
                 .get("messageId")
                 .and_then(Value::as_str)
                 .unwrap_or("agent");
+            if !message_deltas.contains_key(message_id) {
+                message_order.push(message_id.to_string());
+            }
             message_deltas
                 .entry(message_id.to_string())
                 .or_default()
@@ -1813,6 +1826,7 @@ fn read_legacy_completed_activity(
     item: &Value,
     activity: &mut Vec<RunActivity>,
     message_deltas: &mut HashMap<String, String>,
+    message_order: &mut Vec<String>,
     completed_messages: &mut HashSet<String>,
 ) {
     match item.get("type").and_then(Value::as_str) {
@@ -1825,11 +1839,14 @@ fn read_legacy_completed_activity(
             {
                 completed_messages.insert(message_id.to_string());
                 message_deltas.remove(message_id);
-                activity.push(RunActivity {
-                    kind: "message".into(),
-                    title: "Codex output".into(),
-                    message: compact_text(text, 520),
-                });
+                message_order.retain(|id| id != message_id);
+                if should_show_agent_output(text) {
+                    activity.push(RunActivity {
+                        kind: "message".into(),
+                        title: "Codex output".into(),
+                        message: compact_text(text, 520),
+                    });
+                }
             }
         }
         Some("commandExecution") => {
@@ -1852,6 +1869,29 @@ fn read_legacy_completed_activity(
         }
         _ => {}
     }
+}
+
+fn should_show_agent_output(text: &str) -> bool {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return false;
+    }
+    let lower = normalized.to_lowercase();
+    let hidden_prefixes = [
+        "warning: code mode is enabled",
+        "warning: skill descriptions were shortened",
+        "i’m using the local `gtm-source-doc-rewrite` workflow",
+        "i'm using the local `gtm-source-doc-rewrite` workflow",
+        "i’m using the local workflow",
+        "i'm using the local workflow",
+        "i found the recurring gtm rewrite workflow note",
+        "i’ll first refresh the project-specific gtm workflow notes",
+        "i'll first refresh the project-specific gtm workflow notes",
+        "the workspace contract is narrow:",
+    ];
+    !hidden_prefixes
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
 }
 
 fn legacy_command_message(item: &Value) -> Option<String> {
@@ -2420,10 +2460,55 @@ mod tests {
                         "sessionId": "sess_123",
                         "update": {
                             "sessionUpdate": "agent_message_chunk",
-                            "messageId": "msg_123",
+                            "messageId": "agent",
                             "content": {
                                 "type": "text",
-                                "text": "I found the source material."
+                                "text": "Warning: Code Mode is enabled in configuration, but model `gpt-5.5` does not advertise Code Mode support."
+                            }
+                        }
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": "sess_123",
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "messageId": "msg_internal",
+                            "content": {
+                                "type": "text",
+                                "text": "I’m using the local `gtm-source-doc-rewrite` workflow because this is the exact four-document GTM source rewrite pattern."
+                            }
+                        }
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": "sess_123",
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "messageId": "msg_first",
+                            "content": {
+                                "type": "text",
+                                "text": "Initial search shows a crowded category."
+                            }
+                        }
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": "sess_123",
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "messageId": "msg_second",
+                            "content": {
+                                "type": "text",
+                                "text": "TapTalk's own pages confirm the core boundary."
                             }
                         }
                     }
@@ -2440,10 +2525,17 @@ mod tests {
         .unwrap();
 
         let activity = read_run_activity(&log_path).unwrap();
-        assert_eq!(activity.len(), 2);
+        assert_eq!(activity.len(), 3);
         assert_eq!(activity[0].message, "Searching public sources");
         assert_eq!(activity[1].title, "Agent output");
-        assert_eq!(activity[1].message, "I found the source material.");
+        assert_eq!(
+            activity[1].message,
+            "Initial search shows a crowded category."
+        );
+        assert_eq!(
+            activity[2].message,
+            "TapTalk's own pages confirm the core boundary."
+        );
 
         fs::remove_file(log_path).unwrap();
     }

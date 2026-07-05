@@ -526,10 +526,15 @@ input:focus {
   line-height: 22px;
 }
 
+.activity-status {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+}
+
 .analyzing-shimmer {
   position: relative;
   width: max-content;
-  margin-top: 12px;
   overflow: hidden;
   color: #8f8f8f;
   font-size: 13px;
