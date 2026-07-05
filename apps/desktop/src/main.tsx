@@ -626,7 +626,7 @@ function ProjectView({
 
         <section
           className="panel activity-card"
-          aria-hidden={showChannels && !isCompanyPanelOpen}
+          aria-hidden={showChannels}
         >
           <div className="activity-head">
             <h2>Codex Output</h2>
@@ -667,7 +667,7 @@ function ProjectView({
 
         <section
           className="channel-setup"
-          aria-hidden={!showChannels || showDashboard || isCompanyPanelOpen}
+          aria-hidden={!showChannels || showDashboard}
           aria-label="Marketing channel setup"
         >
           <div className="channel-header">

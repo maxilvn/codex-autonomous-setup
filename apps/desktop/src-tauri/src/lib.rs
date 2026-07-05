@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -1001,6 +1002,7 @@ fn execute_agent_turn(
 
     let mut child = Command::new(binary)
         .args(&provider.args)
+        .env("PATH", command_env_path())
         .envs(provider.env.iter().map(|item| (&item.name, &item.value)))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1434,16 +1436,43 @@ fn resolve_command(command: &str) -> Option<PathBuf> {
         return candidate.exists().then_some(candidate);
     }
 
-    env::var_os("PATH").and_then(|paths| {
-        env::split_paths(&paths)
-            .map(|path| path.join(command))
-            .find(|path| path.exists())
-    })
+    command_search_paths()
+        .into_iter()
+        .map(|path| path.join(command))
+        .find(|path| path.exists())
+}
+
+fn command_search_paths() -> Vec<PathBuf> {
+    let mut paths = env::var_os("PATH")
+        .map(|value| env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    for path in [
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ] {
+        let path = PathBuf::from(path);
+        if !paths.iter().any(|existing| existing == &path) {
+            paths.push(path);
+        }
+    }
+    paths
+}
+
+fn command_env_path() -> OsString {
+    env::join_paths(command_search_paths())
+        .unwrap_or_else(|_| env::var_os("PATH").unwrap_or_default())
 }
 
 fn command_version(path: &Path) -> Option<String> {
     Command::new(path)
         .arg("--version")
+        .env("PATH", command_env_path())
         .output()
         .ok()
         .filter(|output| output.status.success())
@@ -2235,6 +2264,15 @@ mod tests {
             provider_ids,
             vec!["codex", "claude", "cursor", "devin", "gemini", "copilot", "custom"]
         );
+    }
+
+    #[test]
+    fn command_search_path_includes_common_macos_locations() {
+        let paths = command_search_paths();
+        assert!(paths
+            .iter()
+            .any(|path| path == Path::new("/opt/homebrew/bin")));
+        assert!(paths.iter().any(|path| path == Path::new("/usr/local/bin")));
     }
 
     #[test]

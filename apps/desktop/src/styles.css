@@ -448,10 +448,6 @@ input:focus {
   grid-template-columns: 132px minmax(0, 1fr);
 }
 
-.workspace-channels.workspace-company-open .analysis-grid {
-  grid-template-columns: minmax(320px, 0.75fr) minmax(0, 2.25fr);
-}
-
 .label {
   margin: 0 0 8px;
   color: #8f8f8f;
@@ -698,7 +694,7 @@ code {
   transform: none;
 }
 
-.workspace-channels:not(.workspace-company-open) .activity-card,
+.workspace-channels .activity-card,
 .workspace-dashboard .activity-card {
   pointer-events: none;
   opacity: 0;
@@ -727,12 +723,6 @@ code {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
-}
-
-.workspace-channels.workspace-company-open .channel-setup {
-  pointer-events: none;
-  opacity: 0;
-  transform: translateY(18px);
 }
 
 .workspace-dashboard .channel-setup {
