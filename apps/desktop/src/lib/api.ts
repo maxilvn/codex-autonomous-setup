@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AgentProviderStatus, ProjectState, RunState } from "./types";
+import type {
+  AgentProviderStatus,
+  ChromeProfile,
+  ProjectState,
+  RunState,
+} from "./types";
 
 function hasTauriBridge() {
   return "__TAURI_INTERNALS__" in window;
@@ -7,7 +12,9 @@ function hasTauriBridge() {
 
 function call<T>(command: string, args?: Record<string, unknown>) {
   if (!hasTauriBridge()) {
-    return Promise.reject(new Error("Tauri backend unavailable in browser preview."));
+    return Promise.reject(
+      new Error("Tauri backend unavailable in browser preview."),
+    );
   }
   return invoke<T>(command, args);
 }
@@ -46,10 +53,28 @@ export const api = {
   runInitialAnalysis(projectPath: string) {
     return call<RunState>("run_initial_analysis", { projectPath });
   },
+  configureChannel(projectPath: string, channelId: string) {
+    return call<ProjectState>("configure_channel", { projectPath, channelId });
+  },
+  listChromeProfiles() {
+    return call<ChromeProfile[]>("list_chrome_profiles");
+  },
+  verifyXLogin(projectPath: string, profileId?: string | null) {
+    return call<ProjectState>("verify_x_login", { projectPath, profileId });
+  },
+  runXAccountAnalysis(projectPath: string) {
+    return call<RunState>("run_x_account_analysis", { projectPath });
+  },
   openProjectInCodex(projectPath: string) {
     return call<void>("open_project_in_codex", { projectPath });
   },
   openExternalUrl(url: string) {
     return call<void>("open_external_url", { url });
+  },
+  openChromeUrl(url: string) {
+    return call<void>("open_chrome_url", { url });
+  },
+  openXLogin(profileId?: string | null) {
+    return call<void>("open_x_login", { profileId });
   },
 };

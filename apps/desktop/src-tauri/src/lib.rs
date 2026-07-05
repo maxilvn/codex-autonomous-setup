@@ -101,6 +101,7 @@ struct ProjectState {
     config: ProjectConfig,
     agent_provider: AgentProviderStatus,
     docs: Vec<ContextDoc>,
+    channel_setups: Vec<ChannelSetup>,
     latest_run: Option<RunState>,
     run_activity: Vec<RunActivity>,
 }
@@ -140,6 +141,115 @@ struct RunActivity {
     kind: String,
     title: String,
     message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChannelSetup {
+    id: String,
+    name: String,
+    status: ChannelSetupStatus,
+    account_status: XAccountStatus,
+    login_status: XLoginStatus,
+    analysis_status: XAnalysisStatus,
+    account_label: Option<String>,
+    account_handle: Option<String>,
+    account_avatar_url: Option<String>,
+    chrome_profile_id: Option<String>,
+    check_method: Option<String>,
+    checked_at: Option<String>,
+    path: String,
+    files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChromeProfile {
+    id: String,
+    name: String,
+    email: Option<String>,
+    account_name: Option<String>,
+    avatar_path: Option<String>,
+    profile_color: Option<i64>,
+    has_x_session: bool,
+    is_recommended: bool,
+    is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ChannelSetupStatus {
+    NotConfigured,
+    NeedsLogin,
+    Analyzing,
+    Ready,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum XAccountStatus {
+    NotConfigured,
+    Checking,
+    Authenticated,
+    NeedsLogin,
+    Unknown,
+}
+
+impl Default for XAccountStatus {
+    fn default() -> Self {
+        Self::NotConfigured
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum XLoginStatus {
+    Unknown,
+    NeedsLogin,
+    Verified,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum XAnalysisStatus {
+    NotStarted,
+    Running,
+    Ready,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct XChannelStatus {
+    #[serde(default)]
+    account_status: XAccountStatus,
+    login_status: XLoginStatus,
+    analysis_status: XAnalysisStatus,
+    account_label: Option<String>,
+    account_handle: Option<String>,
+    account_avatar_url: Option<String>,
+    chrome_profile_id: Option<String>,
+    check_method: Option<String>,
+    checked_at: Option<String>,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct XBrowserIdentity {
+    handle: Option<String>,
+    label: Option<String>,
+    avatar_url: Option<String>,
+}
+
+struct XLoginCheck {
+    account_status: XAccountStatus,
+    account_label: Option<String>,
+    account_handle: Option<String>,
+    account_avatar_url: Option<String>,
+    chrome_profile_id: Option<String>,
+    check_method: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -182,8 +292,14 @@ pub fn run() {
             load_last_project,
             load_project,
             run_initial_analysis,
+            configure_channel,
+            list_chrome_profiles,
+            verify_x_login,
+            run_x_account_analysis,
             open_project_in_codex,
-            open_external_url
+            open_external_url,
+            open_chrome_url,
+            open_x_login
         ])
         .run(tauri::generate_context!())
         .expect("error while running GTM Agent");
@@ -264,9 +380,188 @@ fn load_project(project_path: String) -> AppResult<ProjectState> {
         config,
         agent_provider: selected_provider_status()?,
         docs: read_docs(&path)?,
+        channel_setups: read_channel_setups(&path),
         latest_run,
         run_activity,
     })
+}
+
+#[tauri::command]
+fn configure_channel(project_path: String, channel_id: String) -> AppResult<ProjectState> {
+    let path = PathBuf::from(project_path);
+    if channel_id != "x" {
+        return Err(AppError::Invalid(format!(
+            "{channel_id} setup is not implemented yet"
+        )));
+    }
+    write_x_channel_setup(&path)?;
+    append_event(
+        &path,
+        "channel.configured",
+        "X channel setup initialized",
+        serde_json::json!({
+            "channelId": "x",
+            "mode": "chrome_session_draft_first",
+        }),
+    )?;
+    load_project(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn list_chrome_profiles() -> AppResult<Vec<ChromeProfile>> {
+    read_chrome_profiles()
+}
+
+#[tauri::command]
+fn verify_x_login(project_path: String, profile_id: Option<String>) -> AppResult<ProjectState> {
+    let path = PathBuf::from(project_path);
+    write_x_channel_setup(&path)?;
+    let login = check_x_login_in_chrome(profile_id.as_deref())?;
+    let login_status = match login.account_status {
+        XAccountStatus::Authenticated => XLoginStatus::Verified,
+        XAccountStatus::NeedsLogin => XLoginStatus::NeedsLogin,
+        _ => XLoginStatus::Unknown,
+    };
+    write_x_channel_status(
+        &path,
+        XChannelStatus {
+            account_status: login.account_status,
+            login_status,
+            analysis_status: XAnalysisStatus::NotStarted,
+            account_label: login.account_label,
+            account_handle: login.account_handle,
+            account_avatar_url: login.account_avatar_url,
+            chrome_profile_id: login.chrome_profile_id,
+            check_method: Some(login.check_method),
+            checked_at: Some(Utc::now().to_rfc3339()),
+            updated_at: Utc::now().to_rfc3339(),
+        },
+    )?;
+    load_project(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn run_x_account_analysis(app: tauri::AppHandle, project_path: String) -> AppResult<RunState> {
+    let path = PathBuf::from(project_path);
+    let config: ProjectConfig = read_json(&path.join(".gtm-agent/config.json"))?;
+    let provider = selected_provider()?;
+    let provider_status = provider_status(&provider);
+    if !provider_status.available {
+        return Err(AppError::Agent(
+            provider_status
+                .error
+                .unwrap_or_else(|| format!("{} is not available", provider.title)),
+        ));
+    }
+    write_x_channel_setup(&path)?;
+    let current_status = read_x_channel_status(&path);
+    if current_status.account_status != XAccountStatus::Authenticated {
+        return Err(AppError::Invalid(
+            "verify the X account in Chrome before starting account analysis".into(),
+        ));
+    }
+    write_x_channel_status(
+        &path,
+        XChannelStatus {
+            account_status: XAccountStatus::Authenticated,
+            login_status: XLoginStatus::Verified,
+            analysis_status: XAnalysisStatus::Running,
+            updated_at: Utc::now().to_rfc3339(),
+            ..current_status.clone()
+        },
+    )?;
+    let run_id = format!("x_run_{}", Utc::now().format("%Y%m%d%H%M%S"));
+    let run_path = run_manifest_path(&path, &run_id);
+    let log_path = path.join(".gtm-agent/runs").join(format!("{run_id}.jsonl"));
+    let run = RunState {
+        id: run_id.clone(),
+        kind: "x_account_analysis".into(),
+        status: RunStatus::Running,
+        provider_id: Some(provider.id.clone()),
+        provider_title: Some(provider.title.clone()),
+        external_session_id: None,
+        codex_thread_id: None,
+        started_at: Utc::now().to_rfc3339(),
+        completed_at: None,
+        log_path: log_path.to_string_lossy().to_string(),
+        error: None,
+    };
+    write_json_pretty(&run_path, &run)?;
+    append_event(
+        &path,
+        "channel.analysis_started",
+        "X account analysis started",
+        serde_json::json!({ "runId": run.id, "channelId": "x" }),
+    )?;
+
+    let app_handle = app.clone();
+    let run_for_thread = run.clone();
+    thread::spawn(move || {
+        let result = execute_agent_turn(
+            &path,
+            &run_for_thread,
+            &provider,
+            &x_account_analysis_prompt(&config, &current_status),
+            "X account analysis",
+        );
+        let status_result = match &result {
+            Ok(()) => {
+                let reported = read_x_channel_status(&path);
+                if reported.login_status == XLoginStatus::NeedsLogin {
+                    write_x_channel_status(
+                        &path,
+                        XChannelStatus {
+                            account_status: XAccountStatus::NeedsLogin,
+                            login_status: XLoginStatus::NeedsLogin,
+                            analysis_status: XAnalysisStatus::NotStarted,
+                            updated_at: Utc::now().to_rfc3339(),
+                            ..reported
+                        },
+                    )
+                } else {
+                    let account_label = read_x_account_label(&path);
+                    write_x_channel_status(
+                        &path,
+                        XChannelStatus {
+                            account_status: XAccountStatus::Authenticated,
+                            login_status: XLoginStatus::Verified,
+                            analysis_status: XAnalysisStatus::Ready,
+                            account_label: account_label.or(reported.account_label),
+                            updated_at: Utc::now().to_rfc3339(),
+                            ..reported
+                        },
+                    )
+                }
+            }
+            Err(_) => {
+                let reported = read_x_channel_status(&path);
+                write_x_channel_status(
+                    &path,
+                    XChannelStatus {
+                        analysis_status: XAnalysisStatus::Failed,
+                        account_label: read_x_account_label(&path).or(reported.account_label),
+                        updated_at: Utc::now().to_rfc3339(),
+                        ..reported
+                    },
+                )
+            }
+        };
+        let _ = status_result;
+        let _ = app_handle.emit(
+            "project-updated",
+            serde_json::json!({ "projectPath": path.to_string_lossy(), "runId": run_id }),
+        );
+        if let Err(err) = result {
+            let _ = append_event(
+                &path,
+                "channel.analysis_failed",
+                &format!("X account analysis failed: {err}"),
+                serde_json::json!({ "runId": run_id, "channelId": "x" }),
+            );
+        }
+    });
+
+    Ok(run)
 }
 
 #[tauri::command]
@@ -346,15 +641,316 @@ fn open_external_url(url: String) -> AppResult<()> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_chrome_url(url: String) -> AppResult<()> {
+    let normalized = normalize_url(&url)?;
+    Command::new("open")
+        .arg("-a")
+        .arg("Google Chrome")
+        .arg(normalized)
+        .spawn()
+        .map_err(|err| AppError::Open(err.to_string()))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_x_login(profile_id: Option<String>) -> AppResult<()> {
+    open_chrome_url_in_profile("https://x.com/i/flow/login", profile_id.as_deref())
+}
+
+fn open_chrome_url_in_profile(url: &str, profile_id: Option<&str>) -> AppResult<()> {
+    let normalized = normalize_url(url)?;
+    if let Some(profile_id) = profile_id.filter(|value| !value.trim().is_empty()) {
+        Command::new("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+            .arg(format!("--profile-directory={profile_id}"))
+            .arg(normalized)
+            .spawn()
+            .map_err(|err| AppError::Open(err.to_string()))?;
+        return Ok(());
+    }
+    open_chrome_url(normalized)
+}
+
+fn chrome_user_data_dir() -> AppResult<PathBuf> {
+    Ok(dirs::home_dir()
+        .ok_or_else(|| AppError::Open("could not locate the home directory".into()))?
+        .join("Library/Application Support/Google/Chrome"))
+}
+
+fn read_chrome_profiles() -> AppResult<Vec<ChromeProfile>> {
+    let user_data_dir = chrome_user_data_dir()?;
+    let local_state_path = user_data_dir.join("Local State");
+    if !local_state_path.exists() {
+        return Ok(Vec::new());
+    }
+    let local_state: Value = read_json(&local_state_path)?;
+    let Some(info_cache) = local_state
+        .get("profile")
+        .and_then(|profile| profile.get("info_cache"))
+        .and_then(Value::as_object)
+    else {
+        return Ok(Vec::new());
+    };
+
+    let mut profiles = info_cache
+        .iter()
+        .map(|(id, profile)| ChromeProfile {
+            id: id.clone(),
+            name: profile
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(id)
+                .to_string(),
+            email: profile
+                .get("user_name")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string),
+            account_name: profile
+                .get("gaia_name")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string),
+            avatar_path: chrome_profile_avatar_path(&user_data_dir, id),
+            profile_color: profile
+                .get("profile_highlight_color")
+                .and_then(Value::as_i64),
+            has_x_session: check_x_session_cookies(Some(id))
+                .map(|status| status.has_session)
+                .unwrap_or(false),
+            is_recommended: false,
+            is_default: id == "Default",
+        })
+        .collect::<Vec<_>>();
+    let recommended_id = profiles
+        .iter()
+        .filter(|profile| profile.has_x_session && !profile.is_default)
+        .min_by_key(|profile| chrome_profile_sort_key(&profile.id))
+        .or_else(|| profiles.iter().find(|profile| profile.has_x_session))
+        .or_else(|| profiles.iter().find(|profile| profile.is_default))
+        .map(|profile| profile.id.clone());
+    for profile in &mut profiles {
+        profile.is_recommended = recommended_id.as_deref() == Some(profile.id.as_str());
+    }
+    profiles.sort_by(|a, b| {
+        b.is_recommended
+            .cmp(&a.is_recommended)
+            .then_with(|| b.has_x_session.cmp(&a.has_x_session))
+            .then_with(|| chrome_profile_sort_key(&a.id).cmp(&chrome_profile_sort_key(&b.id)))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    Ok(profiles)
+}
+
+fn chrome_profile_avatar_path(user_data_dir: &Path, profile_id: &str) -> Option<String> {
+    [
+        "Google Profile Picture.png",
+        "Account Avatar.png",
+        "Profile Picture.png",
+    ]
+    .iter()
+    .map(|file_name| user_data_dir.join(profile_id).join(file_name))
+    .find(|path| path.exists())
+    .map(|path| path.to_string_lossy().to_string())
+}
+
+fn chrome_profile_sort_key(profile_id: &str) -> i64 {
+    if profile_id == "Default" {
+        return i64::MAX;
+    }
+    profile_id
+        .strip_prefix("Profile ")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(i64::MAX - 1)
+}
+
+fn check_x_login_in_chrome(profile_id: Option<&str>) -> AppResult<XLoginCheck> {
+    let cookie_status = match check_x_session_cookies(profile_id) {
+        Ok(status) => status,
+        Err(_) => {
+            return Ok(XLoginCheck {
+                account_status: XAccountStatus::Unknown,
+                account_label: None,
+                account_handle: None,
+                account_avatar_url: None,
+                chrome_profile_id: profile_id.map(str::to_string),
+                check_method: "chrome_cookie_probe".into(),
+            });
+        }
+    };
+    let Some(cookie_profile_id) = cookie_status.profile_id else {
+        return Ok(XLoginCheck {
+            account_status: XAccountStatus::Unknown,
+            account_label: None,
+            account_handle: None,
+            account_avatar_url: None,
+            chrome_profile_id: profile_id.map(str::to_string),
+            check_method: "chrome_cookie_probe".into(),
+        });
+    };
+    if !cookie_status.has_session {
+        open_chrome_url_in_profile("https://x.com/i/flow/login", profile_id)?;
+        return Ok(XLoginCheck {
+            account_status: XAccountStatus::NeedsLogin,
+            account_label: None,
+            account_handle: None,
+            account_avatar_url: None,
+            chrome_profile_id: Some(cookie_profile_id),
+            check_method: "chrome_cookie_probe".into(),
+        });
+    }
+
+    open_chrome_url_in_profile("https://x.com/home", profile_id)?;
+    thread::sleep(std::time::Duration::from_millis(2200));
+    let browser_identity = inspect_x_identity_in_chrome().unwrap_or(None);
+    let account_handle = browser_identity
+        .as_ref()
+        .and_then(|identity| identity.handle.clone());
+    let account_label = browser_identity
+        .as_ref()
+        .and_then(|identity| identity.label.clone())
+        .or_else(|| account_handle.clone())
+        .or_else(|| Some("X account in Chrome".into()));
+    let account_avatar_url = browser_identity.and_then(|identity| identity.avatar_url);
+    Ok(XLoginCheck {
+        account_status: XAccountStatus::Authenticated,
+        account_label,
+        account_handle,
+        account_avatar_url,
+        chrome_profile_id: Some(cookie_profile_id),
+        check_method: "chrome_cookie_probe".into(),
+    })
+}
+
+struct XCookieStatus {
+    profile_id: Option<String>,
+    has_session: bool,
+}
+
+fn check_x_session_cookies(profile_id: Option<&str>) -> AppResult<XCookieStatus> {
+    let user_data_dir = chrome_user_data_dir()?;
+    let resolved_profile_id = profile_id
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            read_chrome_profiles()
+                .ok()
+                .and_then(|profiles| profiles.into_iter().next().map(|profile| profile.id))
+        });
+    let Some(profile_id) = resolved_profile_id else {
+        return Ok(XCookieStatus {
+            profile_id: None,
+            has_session: false,
+        });
+    };
+    let cookies_path = [
+        user_data_dir.join(&profile_id).join("Network/Cookies"),
+        user_data_dir.join(&profile_id).join("Cookies"),
+    ]
+    .into_iter()
+    .find(|path| path.exists());
+    let Some(cookies_path) = cookies_path else {
+        return Ok(XCookieStatus {
+            profile_id: Some(profile_id),
+            has_session: false,
+        });
+    };
+
+    let temp_path = std::env::temp_dir().join(format!(
+        "gtm-agent-chrome-cookies-{}.sqlite",
+        Uuid::new_v4().simple()
+    ));
+    fs::copy(&cookies_path, &temp_path)?;
+    let query = "select count(*) from cookies where host_key in ('.x.com','x.com','.twitter.com','twitter.com') and name = 'auth_token';";
+    let output = Command::new("sqlite3").arg(&temp_path).arg(query).output();
+    let _ = fs::remove_file(&temp_path);
+    let output = output.map_err(|err| AppError::Open(format!("failed to run sqlite3: {err}")))?;
+    if !output.status.success() {
+        return Err(AppError::Open(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    let count = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<i64>()
+        .unwrap_or(0);
+    Ok(XCookieStatus {
+        profile_id: Some(profile_id),
+        has_session: count > 0,
+    })
+}
+
+fn inspect_x_identity_in_chrome() -> AppResult<Option<XBrowserIdentity>> {
+    let script = r#"
+tell application "Google Chrome"
+  if not (exists window 1) then return ""
+  set foundWindow to 0
+  set foundTab to 0
+  repeat with windowIndex from 1 to count windows
+    repeat with tabIndex from 1 to count tabs of window windowIndex
+      set tabUrl to URL of tab tabIndex of window windowIndex
+      if tabUrl starts with "https://x.com" or tabUrl starts with "https://twitter.com" then
+        set foundWindow to windowIndex
+        set foundTab to tabIndex
+        exit repeat
+      end if
+    end repeat
+    if foundWindow is not 0 then exit repeat
+  end repeat
+  if foundWindow is 0 then return ""
+  set index of window foundWindow to 1
+  set active tab index of window 1 to foundTab
+  set theTab to active tab of window 1
+  set accountJson to ""
+  try
+    set accountJson to execute theTab javascript "(() => { const cleanHandle = (value) => { const match = String(value || '').match(/@?([A-Za-z0-9_]{1,15})/); return match ? '@' + match[1] : ''; }; const profileLink = document.querySelector('a[data-testid=\"AppTabBar_Profile_Link\"]'); const handleFromLink = profileLink ? cleanHandle((profileLink.getAttribute('href') || '').split('/').filter(Boolean).pop()) : ''; const switcher = document.querySelector('[data-testid=\"SideNav_AccountSwitcher_Button\"]'); const switcherText = switcher ? switcher.innerText : ''; const handleFromText = cleanHandle((switcherText.match(/@[A-Za-z0-9_]{1,15}/) || [''])[0]); const handle = handleFromLink || handleFromText; const lines = switcherText.split('\\n').map(v => v.trim()).filter(Boolean); const label = lines.find(v => !v.startsWith('@')) || handle || ''; const avatar = switcher ? (switcher.querySelector('img')?.src || '') : ''; return JSON.stringify({ handle, label, avatarUrl: avatar }); })()"
+  end try
+  return accountJson
+end tell
+"#;
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|err| AppError::Open(format!("failed to inspect Chrome: {err}")))?;
+    if !output.status.success() {
+        return Err(AppError::Open(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        return Ok(None);
+    }
+    let identity: XBrowserIdentity = serde_json::from_str(&stdout)?;
+    Ok(Some(identity))
+}
+
 fn execute_initial_analysis(
     project: &Path,
     config: &ProjectConfig,
     initial: &RunState,
     provider: &AgentProvider,
 ) -> AppResult<()> {
+    execute_agent_turn(
+        project,
+        initial,
+        provider,
+        &initial_analysis_prompt(config),
+        "Initial analysis",
+    )
+}
+
+fn execute_agent_turn(
+    project: &Path,
+    initial: &RunState,
+    provider: &AgentProvider,
+    prompt: &str,
+    task_label: &str,
+) -> AppResult<()> {
     let binary = resolve_command(&provider.command)
         .ok_or_else(|| AppError::Agent(format!("{} command not found", provider.command)))?;
-    let prompt = initial_analysis_prompt(config);
     let log_path = PathBuf::from(&initial.log_path);
     let log_file = Arc::new(Mutex::new(
         OpenOptions::new()
@@ -454,7 +1050,7 @@ fn execute_initial_analysis(
             )?;
             send_rpc(
                 &mut stdin,
-                &acp_session_prompt_request(&id, &prompt),
+                &acp_session_prompt_request(&id, prompt),
                 &log_file,
             )?;
             write_json_pretty(&run_manifest_path(project, &initial.id), &started)?;
@@ -491,7 +1087,7 @@ fn execute_initial_analysis(
         append_event(
             project,
             "task.completed",
-            "Initial analysis completed",
+            &format!("{task_label} completed"),
             serde_json::json!({
                 "runId": initial.id,
                 "providerId": finished.provider_id,
@@ -658,7 +1254,7 @@ fn unsupported_server_request_response(id: Value) -> Value {
         "id": id,
         "error": {
             "code": -32000,
-            "message": "GTM Agent only handles ACP permission requests during initial analysis",
+            "message": "GTM Agent only handles ACP permission requests during analysis",
         },
     })
 }
@@ -842,6 +1438,168 @@ fn read_docs(project_path: &Path) -> AppResult<Vec<ContextDoc>> {
             })
         })
         .collect()
+}
+
+fn read_channel_setups(project_path: &Path) -> Vec<ChannelSetup> {
+    let x_path = project_path.join(".gtm-agent/channels/x");
+    if !x_path.exists() {
+        return vec![ChannelSetup {
+            id: "x".into(),
+            name: "X".into(),
+            status: ChannelSetupStatus::NotConfigured,
+            account_status: XAccountStatus::NotConfigured,
+            login_status: XLoginStatus::Unknown,
+            analysis_status: XAnalysisStatus::NotStarted,
+            account_label: None,
+            account_handle: None,
+            account_avatar_url: None,
+            chrome_profile_id: None,
+            check_method: None,
+            checked_at: None,
+            path: x_path.to_string_lossy().to_string(),
+            files: Vec::new(),
+        }];
+    }
+
+    let channel_status = read_x_channel_status(project_path);
+    let setup_status = match (
+        &channel_status.account_status,
+        &channel_status.analysis_status,
+    ) {
+        (XAccountStatus::Authenticated, XAnalysisStatus::Running) => ChannelSetupStatus::Analyzing,
+        (XAccountStatus::Authenticated, XAnalysisStatus::Ready) => ChannelSetupStatus::Ready,
+        (_, XAnalysisStatus::Failed) => ChannelSetupStatus::Failed,
+        (XAccountStatus::NeedsLogin, _) => ChannelSetupStatus::NeedsLogin,
+        _ => ChannelSetupStatus::NotConfigured,
+    };
+    let files = ["profile.md", "rules.md", "examples.md", "voice.md"]
+        .iter()
+        .filter(|file_name| x_path.join(file_name).exists())
+        .map(|file_name| (*file_name).to_string())
+        .collect::<Vec<_>>();
+
+    vec![ChannelSetup {
+        id: "x".into(),
+        name: "X".into(),
+        status: setup_status,
+        account_status: channel_status.account_status,
+        login_status: channel_status.login_status,
+        analysis_status: channel_status.analysis_status,
+        account_label: channel_status.account_label,
+        account_handle: channel_status.account_handle,
+        account_avatar_url: channel_status.account_avatar_url,
+        chrome_profile_id: channel_status.chrome_profile_id,
+        check_method: channel_status.check_method,
+        checked_at: channel_status.checked_at,
+        path: x_path.to_string_lossy().to_string(),
+        files,
+    }]
+}
+
+fn write_x_channel_setup(project_path: &Path) -> AppResult<()> {
+    let channel_path = project_path.join(".gtm-agent/channels/x");
+    fs::create_dir_all(channel_path.join("drafts"))?;
+
+    write_if_missing(
+        &channel_path.join("profile.md"),
+        "# X Channel Profile\n\n## Connection\n\n- Mode: Existing Chrome session\n- Posting: Browser-assisted after explicit user approval\n- API: Not required for MVP\n\n## Account voice to learn\n\nCodex should learn this from the signed-in X account before recurring runs:\n\n- Profile bio and positioning\n- Recent posts and replies\n- Topics the account naturally discusses\n- Phrases, pacing, and formatting that sound native to the account\n- Posts or replies the user marks as strong examples\n\n## Operating posture\n\nUse global brand voice as the base, then adapt it for X: concise, founder-led, specific, and conversational. Avoid generic launch hype and avoid posting without review.\n",
+    )?;
+    write_if_missing(
+        &channel_path.join("rules.md"),
+        "# X Channel Rules\n\n## Approval\n\n- Manual approval is required before every post or reply.\n- Codex may search, rank opportunities, and draft replies.\n- Codex may open Chrome and prepare a post only after the user confirms.\n- The final public action must be visible to the user before submission.\n\n## Draft standards\n\n- Lead with the problem or observation, not a pitch.\n- Prefer useful replies to cold promotion.\n- Use product mentions only when the thread context makes them natural.\n- Do not make unsupported claims beyond the brand source documents.\n- Save strong approved posts back to `examples.md`.\n\n## Avoid\n\n- Spammy reply chains\n- Generic AI/productivity claims\n- Engagement bait\n- Posting into threads where the product is not relevant\n",
+    )?;
+    write_if_missing(
+        &channel_path.join("examples.md"),
+        "# X Examples\n\nUse this file as the channel-specific memory for what good looks like.\n\n## Strong examples\n\n_Add approved posts and replies here after the user marks them as good._\n\n## Avoid examples\n\n_Add drafts or posts that felt too salesy, off-tone, or low-signal._\n",
+    )?;
+    write_if_missing(
+        &channel_path.join("voice.md"),
+        "# X Account Voice\n\n_Pending account analysis._\n\nCodex should replace this with account-specific voice guidance after reviewing the signed-in X profile, recent posts, replies, and strong examples.\n",
+    )?;
+    write_if_missing(
+        &channel_path.join("searches.md"),
+        "# X Search Strategy\n\n## Inputs\n\nUse `marketing-strategy.md`, `brand-voice.md`, competitor names, ICP language, and pain-point terms from the brand analysis.\n\n## Opportunity types\n\n- Buyer pain posts\n- Founder/operator discussions\n- Competitor or alternative mentions\n- Category education threads\n- Launch or workflow discussions where a helpful reply fits\n\n## Daily run output\n\nFor every opportunity, capture the source URL, why it matters, suggested angle, draft reply, and review status before any browser-assisted posting.\n",
+    )?;
+    write_if_missing(
+        &channel_path.join("drafts/schema.md"),
+        "# X Draft Format\n\nEach draft should include:\n\n- Source post URL\n- Opportunity summary\n- Why this is relevant\n- Suggested reply draft\n- Risk notes\n- Status: `drafted`, `approved`, `posted`, or `skipped`\n\nApproved drafts can later be opened in Chrome, pasted into the reply field, and left for the user to send. A future version may submit after an explicit in-app confirmation.\n",
+    )?;
+    write_if_missing(&channel_path.join("opportunities.jsonl"), "")?;
+    write_if_missing(&channel_path.join("runs.jsonl"), "")?;
+    write_if_missing(
+        &channel_path.join("drafts/README.md"),
+        "# X Draft Queue\n\nDrafts created by daily X runs should live here until they are approved, edited, skipped, or posted through Chrome.\n",
+    )?;
+    if !channel_path.join("status.json").exists() {
+        write_x_channel_status(
+            project_path,
+            XChannelStatus {
+                account_status: XAccountStatus::NotConfigured,
+                login_status: XLoginStatus::Unknown,
+                analysis_status: XAnalysisStatus::NotStarted,
+                account_label: None,
+                account_handle: None,
+                account_avatar_url: None,
+                chrome_profile_id: None,
+                check_method: None,
+                checked_at: None,
+                updated_at: Utc::now().to_rfc3339(),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn read_x_channel_status(project_path: &Path) -> XChannelStatus {
+    let path = project_path.join(".gtm-agent/channels/x/status.json");
+    if path.exists() {
+        if let Ok(status) = read_json(&path) {
+            return status;
+        }
+    }
+    XChannelStatus {
+        account_status: XAccountStatus::NotConfigured,
+        login_status: XLoginStatus::Unknown,
+        analysis_status: XAnalysisStatus::NotStarted,
+        account_label: None,
+        account_handle: None,
+        account_avatar_url: None,
+        chrome_profile_id: None,
+        check_method: None,
+        checked_at: None,
+        updated_at: Utc::now().to_rfc3339(),
+    }
+}
+
+fn write_x_channel_status(project_path: &Path, status: XChannelStatus) -> AppResult<()> {
+    write_json_pretty(
+        &project_path.join(".gtm-agent/channels/x/status.json"),
+        &status,
+    )
+}
+
+fn read_x_account_label(project_path: &Path) -> Option<String> {
+    let status = read_x_channel_status(project_path);
+    status.account_label.or(status.account_handle).or_else(|| {
+        let profile = fs::read_to_string(project_path.join(".gtm-agent/channels/x/profile.md"))
+            .unwrap_or_default();
+        profile
+            .lines()
+            .find_map(|line| line.strip_prefix("- Account:").map(str::trim))
+            .filter(|value| !value.is_empty() && !value.contains("Pending"))
+            .map(str::to_string)
+    })
+}
+
+fn write_if_missing(path: &Path, content: &str) -> AppResult<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, content)?;
+    Ok(())
 }
 
 fn latest_run(project_path: &Path) -> AppResult<Option<RunState>> {
@@ -1169,7 +1927,7 @@ Work in this order:
 
 1. Research the product beyond the homepage. Use the source website, visible subpages, pricing/docs/about/support pages, app store listings, comparison pages, and relevant public search results when available.
 2. Rewrite `product-information.md` first. Start it with a short, plain-language product description paragraph with no URLs. Then add product scope, audience, use cases, proof points, pricing/business model if found, and source notes.
-3. Rewrite `marketing-strategy.md` next with ICP, segments, pain points, positioning, channels, conversion ideas, and caveats.
+3. Rewrite `marketing-strategy.md` next with ICP, segments, pain points, offer, positioning, conversion ideas, caveats, and the channel recommendations needed for onboarding. Keep everything in this file; do not create extra channel, ICP, offer, positioning, or plan files. Include a clearly titled `## Recommended marketing channels` section. In that section evaluate only the currently supported channels: SEO, X, Reddit, and Hacker News. For each supported channel, write a short entry with `Priority: Recommended`, `Priority: Optional`, or `Priority: Not now`, followed by `Why`, `First setup step`, and `Operating mode`. Recommend only channels that fit the public evidence and category. Do not recommend every supported channel by default.
 4. Rewrite `competitor-analysis.md` next. Make this file especially strong. Do not copy only the landing page's named competitors; treat those as signals, not the final ranking. Research the category from multiple public sources: the source website, comparison pages, search results, app listings, category roundups, and competitor websites. Identify products a real buyer would compare for the same job-to-be-done, not just products with similar wording. Rank competitors by buyer relevance, customer overlap, adoption/visibility, category ownership, product maturity, and GTM threat. The top six should usually mix direct specialist products with larger incumbent or platform-native alternatives when those alternatives shape buyer decisions. Include exactly six top competitors in a `## Verified competitor links` section near the top, ordered strongest first. Use canonical product or company pages, not help-center/support URLs. Avoid obscure, tiny, hobby, or open-source tools in the top six unless public evidence shows they materially influence buyer decisions. For each top competitor, include `Why it matters`, `Customer overlap`, `Strengths`, `Weaknesses`, `Positioning angle`, and `GTM implication`. Add a short `## Secondary alternatives` section for smaller tools that are relevant but not top-six, with one sentence explaining why they were excluded from the main set. Each verified link must be a Markdown link using the official company or product website, for example `- [Competitor Name](https://example.com)`. Only include reachable official links you have verified; omit uncertain competitors instead of guessing domains or inventing websites from names.
 5. Rewrite `brand-voice.md` last with tone, vocabulary, messaging rules, claims to avoid, and example language.
 
@@ -1180,6 +1938,93 @@ Write progress messages for the app user in a clean product-research tone. Keep 
 Keep the files concise but specific enough that future GTM tasks can use them as source context. Include uncertainty where evidence is weak. Do not create outreach drafts, schedules, plugins, or extra strategy files. Do not post publicly or send messages. Rewrite only the four requested Markdown files and append progress/completion events to `.gtm-agent/events.jsonl` as JSON lines with eventType, summary, payload, and createdAt.
 "#,
         url = config.website_url
+    )
+}
+
+fn x_account_analysis_prompt(config: &ProjectConfig, status: &XChannelStatus) -> String {
+    let account = status
+        .account_label
+        .as_deref()
+        .or(status.account_handle.as_deref())
+        .unwrap_or("the currently signed-in X account");
+    let account_handle = status.account_handle.as_deref().unwrap_or("unknown");
+    let account_avatar_url = status.account_avatar_url.as_deref().unwrap_or("unknown");
+    let chrome_profile_id = status.chrome_profile_id.as_deref().unwrap_or("unknown");
+    let checked_at = status.checked_at.as_deref().unwrap_or("unknown");
+    let check_method = status
+        .check_method
+        .as_deref()
+        .unwrap_or("chrome_cookie_probe");
+    format!(
+        r#"Configure X outreach for {account} in this GTM workspace.
+
+Website: {url}
+Brand: {name}
+Account verified by app: {account}
+Account handle from app: {account_handle}
+Chrome profile ID from app: {chrome_profile_id}
+Avatar URL from app: {account_avatar_url}
+Verification method: {check_method}
+Verified at: {checked_at}
+
+Goal:
+Configure the X channel for draft-first outreach. Do not post, like, follow, send, or publicly interact. Only inspect the logged-in account and write local channel context files.
+
+The app has already verified the selected Chrome profile has an authenticated X session. Do not spend the run checking whether login exists. If your ACP provider exposes browser, Chrome, or computer-control tools, use them opportunistically to inspect the visible profile, recent posts, replies, and account-specific voice. If browser tools are unavailable, fail open: complete the channel setup from the app-provided account metadata and the global brand files, explicitly noting in `profile.md`, `voice.md`, and `examples.md` that live post/reply inspection was unavailable and should be refreshed after browser tools are configured.
+
+Then rewrite only these files:
+- `.gtm-agent/channels/x/profile.md`
+- `.gtm-agent/channels/x/rules.md`
+- `.gtm-agent/channels/x/examples.md`
+- `.gtm-agent/channels/x/voice.md`
+- `.gtm-agent/channels/x/status.json`
+
+Use the global brand files as base context:
+- `product-information.md`
+- `marketing-strategy.md`
+- `competitor-analysis.md`
+- `brand-voice.md`
+
+File requirements:
+
+1. `profile.md`
+Capture the signed-in account name/handle, visible bio, positioning, recurring topics, audience clues, and what kind of X activity fits the account. Include a line formatted exactly as `- Account: @handle or display name` when known.
+
+2. `voice.md`
+Write account-specific voice guidance based on visible posts/replies: tone, pacing, sentence style, vocabulary, formatting habits, and how the global brand voice should adapt for X.
+
+3. `examples.md`
+Capture only useful patterns, not private data. Include strong post/reply examples as short paraphrased patterns unless quoting is necessary. Add sections for `Strong examples`, `Reusable patterns`, and `Avoid`.
+
+4. `rules.md`
+Keep the draft-first operating rules: Codex may find opportunities and draft replies; public posting requires explicit user approval. Include guardrails for spam, unsupported claims, and when not to reply.
+
+5. `status.json`
+Write valid JSON with this exact shape:
+{{
+  "accountStatus": "authenticated",
+  "loginStatus": "verified",
+  "analysisStatus": "ready",
+  "accountLabel": "{account}",
+  "accountHandle": "{account_handle}",
+  "accountAvatarUrl": "{account_avatar_url}",
+  "chromeProfileId": "{chrome_profile_id}",
+  "checkMethod": "{check_method}",
+  "checkedAt": "{checked_at}",
+  "updatedAt": "ISO-8601 timestamp"
+}}
+If any provided value is `unknown`, write JSON null for that field instead of the word unknown.
+
+Do not create outreach drafts in this run. Do not modify backend queue files such as `opportunities.jsonl`, `runs.jsonl`, or files in `drafts/` unless they do not exist and are needed as empty placeholders.
+"#,
+        account = account,
+        url = config.website_url,
+        name = config.name,
+        account_handle = account_handle,
+        account_avatar_url = account_avatar_url,
+        chrome_profile_id = chrome_profile_id,
+        check_method = check_method,
+        checked_at = checked_at
     )
 }
 
@@ -1618,6 +2463,40 @@ mod tests {
             assert!(!content.contains("Source URL"));
         }
         assert!(project_path.join(".gtm-agent/events.jsonl").exists());
+
+        fs::remove_dir_all(project_path).unwrap();
+    }
+
+    #[test]
+    fn writes_x_channel_setup_files() {
+        let project_path =
+            std::env::temp_dir().join(format!("gtm-agent-x-test-{}", Uuid::new_v4().simple()));
+
+        write_x_channel_setup(&project_path).unwrap();
+
+        let channel_path = project_path.join(".gtm-agent/channels/x");
+        for file_name in [
+            "profile.md",
+            "rules.md",
+            "examples.md",
+            "voice.md",
+            "searches.md",
+            "opportunities.jsonl",
+            "runs.jsonl",
+            "status.json",
+            "drafts/README.md",
+            "drafts/schema.md",
+        ] {
+            assert!(channel_path.join(file_name).exists());
+        }
+        let setups = read_channel_setups(&project_path);
+        assert_eq!(setups.len(), 1);
+        assert_eq!(setups[0].status, ChannelSetupStatus::NotConfigured);
+        assert_eq!(setups[0].account_status, XAccountStatus::NotConfigured);
+        assert_eq!(setups[0].login_status, XLoginStatus::Unknown);
+        assert_eq!(setups[0].analysis_status, XAnalysisStatus::NotStarted);
+        assert!(setups[0].files.contains(&"voice.md".into()));
+        assert!(!setups[0].files.contains(&"drafts/schema.md".into()));
 
         fs::remove_dir_all(project_path).unwrap();
     }

@@ -27,7 +27,7 @@ export interface ContextDoc {
 
 export interface RunState {
   id: string;
-  kind: "initial_analysis";
+  kind: "initial_analysis" | "x_account_analysis";
   status: "running" | "completed" | "failed";
   providerId?: string | null;
   providerTitle?: string | null;
@@ -45,10 +45,41 @@ export interface RunActivity {
   message: string;
 }
 
+export interface ChannelSetup {
+  id: string;
+  name: string;
+  status: "not_configured" | "needs_login" | "analyzing" | "ready" | "failed";
+  accountStatus:
+    "not_configured" | "checking" | "authenticated" | "needs_login" | "unknown";
+  loginStatus: "unknown" | "needs_login" | "verified";
+  analysisStatus: "not_started" | "running" | "ready" | "failed";
+  accountLabel?: string | null;
+  accountHandle?: string | null;
+  accountAvatarUrl?: string | null;
+  chromeProfileId?: string | null;
+  checkMethod?: string | null;
+  checkedAt?: string | null;
+  path: string;
+  files: string[];
+}
+
+export interface ChromeProfile {
+  id: string;
+  name: string;
+  email?: string | null;
+  accountName?: string | null;
+  avatarPath?: string | null;
+  profileColor?: number | null;
+  hasXSession: boolean;
+  isRecommended: boolean;
+  isDefault: boolean;
+}
+
 export interface ProjectState {
   config: ProjectConfig;
   agentProvider: AgentProviderStatus;
   docs: ContextDoc[];
+  channelSetups: ChannelSetup[];
   latestRun?: RunState | null;
   runActivity: RunActivity[];
 }
