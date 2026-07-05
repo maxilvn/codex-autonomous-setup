@@ -71,10 +71,10 @@ input:focus {
 }
 
 .shell {
-  width: min(1680px, calc(100vw - 72px));
+  width: min(1160px, calc(100vw - 48px));
   height: 100vh;
   margin: 0 auto;
-  padding: 24px 0;
+  padding: 18px 0;
 }
 
 .topbar {
@@ -369,7 +369,7 @@ input:focus {
 }
 
 .workspace {
-  --analysis-card-height: calc(100vh - 48px);
+  --analysis-card-height: calc(100vh - 36px);
   display: grid;
   gap: 0;
 }
@@ -438,8 +438,8 @@ input:focus {
 
 .analysis-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 0.75fr) minmax(0, 2.25fr);
-  gap: 18px;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 14px;
   align-items: start;
   height: var(--analysis-card-height);
 }
@@ -463,10 +463,10 @@ input:focus {
   grid-column: 2;
   grid-row: 1;
   grid-template-rows: auto minmax(0, 1fr) auto auto auto;
-  gap: 14px;
+  gap: 12px;
   height: var(--analysis-card-height);
   min-height: 320px;
-  padding: 20px;
+  padding: 18px 20px;
   opacity: 1;
   transform: translateX(0);
   transition:
@@ -478,20 +478,20 @@ input:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 14px;
 }
 
 .activity-head h2 {
   margin: 0;
-  font-size: 20px;
-  line-height: 28px;
+  font-size: 19px;
+  line-height: 26px;
   letter-spacing: 0;
 }
 
 .agent-log-toggle {
-  height: 34px;
-  padding: 0 12px;
-  font-size: 13px;
+  height: 32px;
+  padding: 0 11px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -502,44 +502,38 @@ input:focus {
 }
 
 .analysis-summary {
-  max-width: 720px;
-  margin-bottom: 18px;
+  max-width: 620px;
+  margin-bottom: 16px;
 }
 
 .analysis-summary p {
   margin: 0;
   color: #666666;
-  font-size: 14px;
-  line-height: 22px;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .analysis-step-list {
   display: grid;
-  gap: 0;
-  border-top: 1px solid #f0f0f0;
-  border-bottom: 1px solid #f0f0f0;
+  gap: 6px;
+  max-width: 620px;
 }
 
 .analysis-step {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-  padding: 14px 0;
-  border-top: 1px solid #f0f0f0;
-}
-
-.analysis-step:first-child {
-  border-top: 0;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 42px;
+  padding: 6px 0;
 }
 
 .analysis-step-icon {
   position: relative;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  margin-top: 1px;
+  width: 18px;
+  height: 18px;
   border: 1px solid #dcdcdc;
   border-radius: 999px;
   background: #ffffff;
@@ -551,7 +545,7 @@ input:focus {
 }
 
 .analysis-step.is-done .analysis-step-icon::after {
-  width: 8px;
+  width: 7px;
   height: 4px;
   border-bottom: 2px solid #ffffff;
   border-left: 2px solid #ffffff;
@@ -560,31 +554,35 @@ input:focus {
 }
 
 .analysis-step.is-active .analysis-step-icon {
-  border-color: #171717;
+  border-color: #e2e2e2;
+  border-top-color: #171717;
+  border-right-color: #171717;
+  animation: analysis-spinner 760ms linear infinite;
 }
 
 .analysis-step.is-active .analysis-step-icon::after {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: #171717;
-  content: "";
+  content: none;
+}
+
+@keyframes analysis-spinner {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .analysis-step strong {
   display: block;
-  margin-bottom: 3px;
   color: #171717;
-  font-size: 14px;
-  line-height: 20px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 650;
 }
 
 .analysis-step p {
   margin: 0;
   color: #777777;
-  font-size: 13px;
-  line-height: 20px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .analysis-step.is-pending strong,
@@ -742,10 +740,10 @@ code {
 .documents-card {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
   height: var(--analysis-card-height);
   min-height: 320px;
-  padding: 20px 10px;
+  padding: 18px 10px;
   overflow: auto;
   transform-origin: top left;
   transition:

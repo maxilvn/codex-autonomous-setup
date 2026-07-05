@@ -839,6 +839,7 @@ type AnalysisStepStatus = "done" | "active" | "pending";
 type AnalysisStep = {
   title: string;
   detail: string;
+  statusLabel: string;
   status: AnalysisStepStatus;
 };
 
@@ -911,7 +912,7 @@ function AnalysisProgressCard({
               <span className="analysis-step-icon" aria-hidden="true" />
               <div>
                 <strong>{step.title}</strong>
-                <p>{step.detail}</p>
+                <p>{step.statusLabel}</p>
               </div>
             </div>
           ))}
@@ -953,13 +954,6 @@ function AnalysisProgressCard({
         ) : null}
       </div>
 
-      {isRunning ? (
-        <div className="activity-status">
-          <div className="analyzing-shimmer">
-            {readyDocCount ? "Writing documents..." : "Analyzing website..."}
-          </div>
-        </div>
-      ) : null}
       {runError ? <p className="run-error">{runError}</p> : null}
       {isComplete && !runError ? (
         <div className="activity-actions">
@@ -996,23 +990,35 @@ function analysisSteps(
       title: "Website review",
       detail:
         "Reading the public website and extracting the core product context.",
+      pendingLabel: "Waiting",
+      activeLabel: "Reading website",
+      doneLabel: "Website reviewed",
       done: productDocReady || isComplete,
     },
     {
       title: "Positioning",
       detail: "Turning the evidence into product positioning and brand voice.",
+      pendingLabel: "Waiting",
+      activeLabel: "Extracting positioning",
+      doneLabel: "Positioning captured",
       done: (productDocReady && brandDocReady) || isComplete,
     },
     {
       title: "Market context",
       detail:
         "Checking competitors and category alternatives before writing recommendations.",
+      pendingLabel: "Waiting",
+      activeLabel: "Checking market context",
+      doneLabel: "Market context ready",
       done: competitorsDocReady || competitors.length > 0 || isComplete,
     },
     {
       title: "Source documents",
       detail:
         "Writing the GTM source documents used by the rest of the workspace.",
+      pendingLabel: "Waiting",
+      activeLabel: "Writing source documents",
+      doneLabel: "Source documents ready",
       done:
         isComplete ||
         (productDocReady &&
@@ -1024,13 +1030,13 @@ function analysisSteps(
   let activeAssigned = false;
   return stepInputs.map((step) => {
     if (step.done) {
-      return { ...step, status: "done" };
+      return { ...step, status: "done", statusLabel: step.doneLabel };
     }
     if (isRunning && !activeAssigned) {
       activeAssigned = true;
-      return { ...step, status: "active" };
+      return { ...step, status: "active", statusLabel: step.activeLabel };
     }
-    return { ...step, status: "pending" };
+    return { ...step, status: "pending", statusLabel: step.pendingLabel };
   });
 }
 

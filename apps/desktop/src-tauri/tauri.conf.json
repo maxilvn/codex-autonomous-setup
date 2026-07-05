@@ -13,10 +13,11 @@
     "windows": [
       {
         "title": "GTM Agent",
-        "width": 1440,
-        "height": 900,
-        "minWidth": 900,
-        "minHeight": 620
+        "width": 1280,
+        "height": 780,
+        "minWidth": 1280,
+        "minHeight": 780,
+        "resizable": false
       }
     ],
     "security": {
