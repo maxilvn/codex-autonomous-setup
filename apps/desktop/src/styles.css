@@ -383,6 +383,19 @@ input:focus {
   border-top: 0;
 }
 
+.activity-title {
+  display: block;
+  margin-bottom: 3px;
+  color: #161616;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 650;
+}
+
+.activity-item.tool .activity-title {
+  color: #666666;
+}
+
 .activity-item p {
   margin: 0;
   color: #666666;

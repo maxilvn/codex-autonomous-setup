@@ -245,7 +245,11 @@ function ProjectView({ project }: { project: ProjectState }) {
           </div>
           <div className="activity-list">
             {activity.map((item, index) => (
-              <article className="activity-item" key={`${item.title}-${index}`}>
+              <article
+                className={`activity-item ${activityClass(item.kind)}`}
+                key={`${item.title}-${index}`}
+              >
+                <span className="activity-title">{item.title}</span>
                 <p>{item.message}</p>
               </article>
             ))}
@@ -333,6 +337,11 @@ function shouldRunInitialAnalysis(project: ProjectState) {
 
 function hasDocumentContent(doc: ContextDoc) {
   return doc.content.trim() !== `# ${doc.title}`;
+}
+
+function activityClass(kind: string) {
+  if (kind === "message" || kind === "tool" || kind === "idle") return kind;
+  return "other";
 }
 
 function extractProductDescription(docs: ContextDoc[]) {

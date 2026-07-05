@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -866,6 +866,7 @@ fn read_run_activity(log_path: &Path) -> AppResult<Vec<RunActivity>> {
     let file = File::open(log_path)?;
     let mut activity = Vec::new();
     let mut message_deltas = HashMap::<String, String>::new();
+    let mut completed_messages = HashSet::<String>::new();
     let mut tool_titles = HashMap::<String, String>::new();
 
     for line in BufReader::new(file).lines() {
@@ -874,60 +875,49 @@ fn read_run_activity(log_path: &Path) -> AppResult<Vec<RunActivity>> {
             continue;
         };
         let method = value.get("method").and_then(Value::as_str);
-        if method != Some("session/update") {
-            continue;
-        }
 
-        let update = value.pointer("/params/update").unwrap_or(&Value::Null);
-        match update.get("sessionUpdate").and_then(Value::as_str) {
-            Some("agent_message_chunk") => {
-                let text = update
-                    .pointer("/content/text")
+        match method {
+            Some("session/update") => read_acp_activity_update(
+                value.pointer("/params/update").unwrap_or(&Value::Null),
+                &mut activity,
+                &mut message_deltas,
+                &mut tool_titles,
+            ),
+            Some("item/agentMessage/delta") => {
+                let text = value
+                    .pointer("/params/delta")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
                 if text.trim().is_empty() {
                     continue;
                 }
-                let message_id = update
-                    .get("messageId")
+                let message_id = value
+                    .pointer("/params/itemId")
                     .and_then(Value::as_str)
-                    .unwrap_or("agent");
+                    .unwrap_or("codex");
                 message_deltas
                     .entry(message_id.to_string())
                     .or_default()
                     .push_str(text);
             }
-            Some("tool_call") => {
-                if let (Some(tool_id), Some(title)) = (
-                    update.get("toolCallId").and_then(Value::as_str),
-                    update.get("title").and_then(Value::as_str),
-                ) {
-                    tool_titles.insert(tool_id.to_string(), title.to_string());
-                    activity.push(RunActivity {
-                        kind: "tool".into(),
-                        title: "Agent".into(),
-                        message: compact_text(title, 220),
-                    });
-                }
-            }
-            Some("tool_call_update") => {
-                if let Some(message) = acp_tool_update_message(update, &tool_titles) {
-                    activity.push(RunActivity {
-                        kind: "tool".into(),
-                        title: "Agent".into(),
-                        message,
-                    });
-                }
-            }
+            Some("item/completed") => read_legacy_completed_activity(
+                value.pointer("/params/item").unwrap_or(&Value::Null),
+                &mut activity,
+                &mut message_deltas,
+                &mut completed_messages,
+            ),
             _ => {}
         }
     }
 
-    for (_item_id, text) in message_deltas {
+    for (item_id, text) in message_deltas {
+        if completed_messages.contains(&item_id) {
+            continue;
+        }
         if !text.trim().is_empty() {
             activity.push(RunActivity {
                 kind: "message".into(),
-                title: "Agent".into(),
+                title: "Agent output".into(),
                 message: compact_text(&text, 520),
             });
         }
@@ -935,6 +925,175 @@ fn read_run_activity(log_path: &Path) -> AppResult<Vec<RunActivity>> {
 
     let keep_from = activity.len().saturating_sub(12);
     Ok(activity.into_iter().skip(keep_from).collect())
+}
+
+fn read_acp_activity_update(
+    update: &Value,
+    activity: &mut Vec<RunActivity>,
+    message_deltas: &mut HashMap<String, String>,
+    tool_titles: &mut HashMap<String, String>,
+) {
+    match update.get("sessionUpdate").and_then(Value::as_str) {
+        Some("agent_message_chunk") => {
+            let text = update
+                .pointer("/content/text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if text.trim().is_empty() {
+                return;
+            }
+            let message_id = update
+                .get("messageId")
+                .and_then(Value::as_str)
+                .unwrap_or("agent");
+            message_deltas
+                .entry(message_id.to_string())
+                .or_default()
+                .push_str(text);
+        }
+        Some("tool_call") => {
+            if let (Some(tool_id), Some(title)) = (
+                update.get("toolCallId").and_then(Value::as_str),
+                update.get("title").and_then(Value::as_str),
+            ) {
+                tool_titles.insert(tool_id.to_string(), title.to_string());
+                activity.push(RunActivity {
+                    kind: "tool".into(),
+                    title: "Agent tool".into(),
+                    message: compact_text(title, 220),
+                });
+            }
+        }
+        Some("tool_call_update") => {
+            if let Some(message) = acp_tool_update_message(update, tool_titles) {
+                activity.push(RunActivity {
+                    kind: "tool".into(),
+                    title: "Agent tool".into(),
+                    message,
+                });
+            }
+        }
+        _ => {}
+    }
+}
+
+fn read_legacy_completed_activity(
+    item: &Value,
+    activity: &mut Vec<RunActivity>,
+    message_deltas: &mut HashMap<String, String>,
+    completed_messages: &mut HashSet<String>,
+) {
+    match item.get("type").and_then(Value::as_str) {
+        Some("agentMessage") => {
+            let message_id = item.get("id").and_then(Value::as_str).unwrap_or("codex");
+            if let Some(text) = item
+                .get("text")
+                .and_then(Value::as_str)
+                .filter(|text| !text.trim().is_empty())
+            {
+                completed_messages.insert(message_id.to_string());
+                message_deltas.remove(message_id);
+                activity.push(RunActivity {
+                    kind: "message".into(),
+                    title: "Codex output".into(),
+                    message: compact_text(text, 520),
+                });
+            }
+        }
+        Some("commandExecution") => {
+            if let Some(message) = legacy_command_message(item) {
+                activity.push(RunActivity {
+                    kind: "tool".into(),
+                    title: "Tool progress".into(),
+                    message,
+                });
+            }
+        }
+        Some("webSearch") => {
+            if let Some(message) = legacy_web_search_message(item) {
+                activity.push(RunActivity {
+                    kind: "tool".into(),
+                    title: "Research".into(),
+                    message,
+                });
+            }
+        }
+        _ => {}
+    }
+}
+
+fn legacy_command_message(item: &Value) -> Option<String> {
+    let actions = item
+        .get("commandActions")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+
+    let summaries = actions
+        .iter()
+        .filter_map(legacy_command_action_summary)
+        .collect::<Vec<_>>();
+    if !summaries.is_empty() {
+        return Some(compact_text(&summaries.join(", "), 260));
+    }
+
+    item.get("command")
+        .and_then(Value::as_str)
+        .filter(|command| !command.trim().is_empty())
+        .map(|command| compact_text(&format!("Ran command: {command}"), 260))
+}
+
+fn legacy_command_action_summary(action: &Value) -> Option<String> {
+    let action_type = action.get("type").and_then(Value::as_str)?;
+    match action_type {
+        "read" => action
+            .get("name")
+            .or_else(|| action.get("path"))
+            .and_then(Value::as_str)
+            .map(|name| format!("Read {name}")),
+        "listFiles" => action
+            .get("path")
+            .and_then(Value::as_str)
+            .map(|path| format!("Listed {path}"))
+            .or_else(|| Some("Listed project files".into())),
+        "search" => action
+            .get("query")
+            .and_then(Value::as_str)
+            .map(|query| format!("Searched {query}")),
+        "write" | "edit" => action
+            .get("name")
+            .or_else(|| action.get("path"))
+            .and_then(Value::as_str)
+            .map(|name| format!("Updated {name}")),
+        _ => None,
+    }
+}
+
+fn legacy_web_search_message(item: &Value) -> Option<String> {
+    let queries = item
+        .pointer("/action/queries")
+        .and_then(Value::as_array)
+        .map(|queries| {
+            queries
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|query| !query.trim().is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    if !queries.is_empty() {
+        return Some(compact_text(
+            &format!("Searched: {}", queries.join(", ")),
+            260,
+        ));
+    }
+
+    item.get("query")
+        .and_then(Value::as_str)
+        .filter(|query| !query.trim().is_empty())
+        .map(|query| compact_text(&format!("Searched: {query}"), 260))
+        .or_else(|| Some("Searched public sources".into()))
 }
 
 fn acp_tool_update_message(
@@ -1344,8 +1503,93 @@ mod tests {
         let activity = read_run_activity(&log_path).unwrap();
         assert_eq!(activity.len(), 2);
         assert_eq!(activity[0].message, "Searching public sources");
-        assert_eq!(activity[1].title, "Agent");
+        assert_eq!(activity[1].title, "Agent output");
         assert_eq!(activity[1].message, "I found the source material.");
+
+        fs::remove_file(log_path).unwrap();
+    }
+
+    #[test]
+    fn reads_run_activity_from_legacy_codex_log() {
+        let log_path =
+            std::env::temp_dir().join(format!("gtm-agent-log-{}.jsonl", Uuid::new_v4().simple()));
+        fs::write(
+            &log_path,
+            [
+                serde_json::json!({
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "itemId": "msg_123",
+                        "delta": "I found "
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "itemId": "msg_123",
+                        "delta": "the source material."
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "type": "agentMessage",
+                            "id": "msg_123",
+                            "text": "I found the source material.",
+                            "phase": "commentary"
+                        }
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "type": "commandExecution",
+                            "id": "call_123",
+                            "commandActions": [
+                                {
+                                    "type": "read",
+                                    "name": "product-information.md",
+                                    "path": "/tmp/product-information.md"
+                                }
+                            ]
+                        }
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "type": "webSearch",
+                            "id": "search_123",
+                            "action": {
+                                "queries": ["TapTalk Mac dictation", "taptlk pricing"]
+                            }
+                        }
+                    }
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let activity = read_run_activity(&log_path).unwrap();
+        assert_eq!(activity.len(), 3);
+        assert_eq!(activity[0].title, "Codex output");
+        assert_eq!(activity[0].message, "I found the source material.");
+        assert_eq!(activity[1].title, "Tool progress");
+        assert_eq!(activity[1].message, "Read product-information.md");
+        assert_eq!(activity[2].title, "Research");
+        assert_eq!(
+            activity[2].message,
+            "Searched: TapTalk Mac dictation, taptlk pricing"
+        );
 
         fs::remove_file(log_path).unwrap();
     }
