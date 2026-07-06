@@ -1253,23 +1253,9 @@ function XChannelSetupPanel({
                       <div className="profile-picker-main">
                         <div className="profile-picker-title">
                           <strong>{profile.name}</strong>
-                          {profile.isRecommended ? (
-                            <span className="profile-recommended">
-                              Suggested
-                            </span>
-                          ) : null}
                         </div>
                         <span className="profile-picker-email">
                           {profileSubtitle(profile)}
-                        </span>
-                        <span
-                          className={
-                            profile.hasXSession
-                              ? "profile-x-status is-found"
-                              : "profile-x-status"
-                          }
-                        >
-                          {profileXAccountLabel(profile)}
                         </span>
                       </div>
                       <em className="profile-picker-action">
@@ -1404,10 +1390,6 @@ function profileSubtitle(profile: ChromeProfile) {
     profile.accountName ??
     (profile.isDefault ? "Default Chrome profile" : profile.id)
   );
-}
-
-function profileXAccountLabel(profile: ChromeProfile) {
-  return profile.hasXSession ? "X account detected" : "No X account detected";
 }
 
 function profileInitials(profile: ChromeProfile) {

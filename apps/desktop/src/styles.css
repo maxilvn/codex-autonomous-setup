@@ -1275,7 +1275,7 @@ code {
   grid-template-columns: 36px minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
-  min-height: 68px;
+  min-height: 60px;
   border: 1px solid #e8e8e8;
   border-radius: 8px;
   padding: 10px 12px;
@@ -1289,7 +1289,8 @@ code {
 }
 
 .profile-picker-row.is-selected {
-  border-color: #171717;
+  border-color: #cfcfcf;
+  background: #fbfbfb;
 }
 
 .profile-picker-main {
@@ -1299,15 +1300,11 @@ code {
 }
 
 .profile-picker-title {
-  display: flex;
-  align-items: center;
-  gap: 7px;
   min-width: 0;
 }
 
 .profile-picker-title strong,
-.profile-picker-email,
-.profile-x-status {
+.profile-picker-email {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1321,37 +1318,14 @@ code {
   font-weight: 650;
 }
 
-.profile-recommended {
-  border: 1px solid #e6e6e6;
-  border-radius: 999px;
-  padding: 1px 6px;
-  color: #666666;
-  background: #fafafa;
-  font-size: 10px;
-  line-height: 13px;
-  font-weight: 600;
-  flex: 0 0 auto;
-}
-
 .profile-picker-email {
   color: #737373;
   font-size: 13px;
   line-height: 18px;
 }
 
-.profile-x-status {
-  color: #888888;
-  font-size: 12px;
-  line-height: 17px;
-  font-weight: 600;
-}
-
-.profile-x-status.is-found {
-  color: #2f6f42;
-}
-
 .profile-picker-action {
-  color: #666666;
+  color: #777777;
   font-size: 12px;
   line-height: 18px;
   font-style: normal;
