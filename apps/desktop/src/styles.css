@@ -1337,13 +1337,33 @@ code {
   line-height: 20px;
 }
 
-.x-codex-card {
+.x-progress-card {
   display: grid;
-  gap: 0;
+  gap: 14px;
   border: 1px solid #eaeaea;
   border-radius: 8px;
-  padding: 12px 12px 10px;
+  padding: 14px;
   background: #ffffff;
+}
+
+.x-progress-summary {
+  display: grid;
+  gap: 3px;
+}
+
+.x-progress-summary h3 {
+  margin: 0;
+  color: #171717;
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 650;
+}
+
+.x-progress-summary p:last-child {
+  margin: 0;
+  color: #666666;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .x-analysis-grid {
@@ -1389,32 +1409,15 @@ code {
   white-space: nowrap;
 }
 
-.x-codex-output {
-  display: grid;
-  max-height: 148px;
-  min-height: 0;
-  overflow: auto;
-  padding-right: 4px;
+.x-progress-steps {
+  max-width: none;
 }
 
-.x-codex-item {
-  border-top: 1px solid #f2f2f2;
-  padding: 10px 0;
+.x-progress-footer {
+  min-height: 20px;
 }
 
-.x-codex-item:first-child {
-  border-top: 0;
-}
-
-.x-codex-item p {
-  margin: 0;
-  color: #666666;
-  font-size: 13px;
-  line-height: 20px;
-}
-
-.x-codex-output .analyzing-shimmer {
-  margin-top: 8px;
+.x-progress-footer .analyzing-shimmer {
   padding-top: 2px;
 }
 

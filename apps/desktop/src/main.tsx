@@ -719,11 +719,6 @@ function ProjectView({
                         channel={activeChannel ?? channel}
                         setup={activeChannelSetup}
                         run={run?.kind === "x_account_analysis" ? run : null}
-                        activity={
-                          run?.kind === "x_account_analysis"
-                            ? project.runActivity
-                            : []
-                        }
                         isConfiguring={configuringChannelId === channel.id}
                         isChecking={checkingChannelId === channel.id}
                         isAnalyzing={analyzingChannelId === channel.id}
@@ -1046,7 +1041,6 @@ function XChannelSetupPanel({
   channel,
   setup,
   run,
-  activity,
   isConfiguring,
   isChecking,
   isAnalyzing,
@@ -1062,7 +1056,6 @@ function XChannelSetupPanel({
   channel: MarketingChannel;
   setup: ChannelSetup | null;
   run: RunState | null;
-  activity: RunActivity[];
   isConfiguring: boolean;
   isChecking: boolean;
   isAnalyzing: boolean;
@@ -1087,9 +1080,10 @@ function XChannelSetupPanel({
   const hasConfirmedSelectedProfile =
     hasSelectedProfileForRun || Boolean(run?.status === "running");
   const isRunActive =
-    hasConfirmedSelectedProfile &&
     hasVerifiedSelectedProfile &&
-    (isAnalyzing || run?.status === "running");
+    (isAnalyzing ||
+      run?.status === "running" ||
+      setup?.analysisStatus === "running");
   const isLoginActionBusy = isChecking || isRunActive || isConfiguring;
   const selectedChromeProfile = chromeProfiles.find(
     (profile) => profile.id === selectedChromeProfileId,
@@ -1122,10 +1116,9 @@ function XChannelSetupPanel({
               : "Check again"
             : "Select";
   const shouldShowAnalysisOutput =
-    hasSelectedProfileForRun &&
     hasVerifiedSelectedProfile &&
-    (isRunActive || agentOutputActivity(activity).length > 0 || isReady);
-  const agentOutput = agentOutputActivity(activity);
+    (hasSelectedProfileForRun || isRunActive || isReady);
+  const analysisSteps = xAnalysisSteps(isRunActive, isReady);
   function useChromeProfile(profileId: string) {
     onSelectChromeProfile(profileId);
     setHasSelectedProfileForRun(false);
@@ -1308,27 +1301,36 @@ function XChannelSetupPanel({
               </button>
             ))}
           </div>
-          <div className="x-codex-card">
-            <div className="x-codex-output">
-              {agentOutput.length ? (
-                agentOutput.slice(-6).map((item, index) => (
-                  <article
-                    className="x-codex-item"
-                    key={`${item.title}-${index}`}
-                  >
-                    <p>{item.message}</p>
-                  </article>
-                ))
-              ) : (
-                <article className="x-codex-item">
-                  <p>
-                    Codex will inspect the selected X account in Chrome and
-                    write profile, rules, examples, and voice.
-                  </p>
-                </article>
-              )}
+          <div className="x-progress-card">
+            <div className="x-progress-summary">
+              <p className="eyebrow">Account analysis</p>
+              <h3>{isReady ? "X channel ready" : "Preparing X channel"}</h3>
+              <p>
+                {isReady
+                  ? "The channel memory is ready for draft-first outreach."
+                  : "GTM Agent is preparing channel memory from the selected Chrome profile and the brand context."}
+              </p>
+            </div>
+            <div className="analysis-step-list x-progress-steps">
+              {analysisSteps.map((step) => (
+                <div
+                  className={`analysis-step is-${step.status}`}
+                  key={step.title}
+                >
+                  <span className="analysis-step-icon" aria-hidden="true" />
+                  <div>
+                    <strong>{step.title}</strong>
+                    <p>{step.statusLabel}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="x-progress-footer">
               {isRunActive ? (
                 <div className="analyzing-shimmer">Analyzing...</div>
+              ) : null}
+              {run?.status === "failed" && run.error ? (
+                <p className="run-error">{run.error}</p>
               ) : null}
             </div>
           </div>
@@ -1370,6 +1372,61 @@ const X_CHANNEL_DOCS = [
   { fileName: "rules.md", title: "Rules" },
   { fileName: "examples.md", title: "Examples" },
 ];
+
+function xAnalysisSteps(isRunning: boolean, isReady: boolean): AnalysisStep[] {
+  const steps = [
+    {
+      title: "Account context",
+      pendingLabel: "Waiting",
+      activeLabel: "Reading selected Chrome profile",
+      doneLabel: "Account context prepared",
+    },
+    {
+      title: "Channel voice",
+      pendingLabel: "Waiting",
+      activeLabel: "Adapting brand voice for X",
+      doneLabel: "Voice rules ready",
+    },
+    {
+      title: "Examples",
+      pendingLabel: "Waiting",
+      activeLabel: "Preparing useful examples",
+      doneLabel: "Examples ready",
+    },
+    {
+      title: "Rules",
+      pendingLabel: "Waiting",
+      activeLabel: "Finalizing approval rules",
+      doneLabel: "Channel rules ready",
+    },
+  ];
+  if (isReady) {
+    return steps.map((step) => ({
+      ...step,
+      detail: step.doneLabel,
+      status: "done",
+      statusLabel: step.doneLabel,
+    }));
+  }
+  let activeAssigned = false;
+  return steps.map((step) => {
+    if (isRunning && !activeAssigned) {
+      activeAssigned = true;
+      return {
+        ...step,
+        detail: step.activeLabel,
+        status: "active",
+        statusLabel: step.activeLabel,
+      };
+    }
+    return {
+      ...step,
+      detail: step.pendingLabel,
+      status: "pending",
+      statusLabel: step.pendingLabel,
+    };
+  });
+}
 
 function ChromeProfileAvatar({ profile }: { profile: ChromeProfile }) {
   if (profile.avatarDataUrl) {
