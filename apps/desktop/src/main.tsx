@@ -202,8 +202,16 @@ function App() {
         );
         return;
       }
-      await api.runChannelAnalysis(project.config.path, channelIds);
-      setProject(await api.loadProject(project.config.path));
+      const channelsToAnalyze = channelIds.filter((channelId) => {
+        const setup = next.channelSetups.find(
+          (candidate) => candidate.id === channelId,
+        );
+        return setup?.analysisStatus !== "ready";
+      });
+      if (channelsToAnalyze.length) {
+        await api.runChannelAnalysis(project.config.path, channelsToAnalyze);
+        setProject(await api.loadProject(project.config.path));
+      }
       setStep("analysis");
     } catch (err) {
       setError(String(err));
@@ -260,6 +268,10 @@ function App() {
           setError(null);
           setWebsiteUrl("");
           setStep("url");
+        }}
+        onAddChannels={() => {
+          setError(null);
+          setStep("channels");
         }}
       />
     );
@@ -1242,12 +1254,14 @@ function Workspace({
   error,
   onError,
   onNewWebsite,
+  onAddChannels,
   onProjectUpdate,
 }: {
   project: ProjectState;
   error: string | null;
   onError: (error: string | null) => void;
   onNewWebsite: () => void;
+  onAddChannels: () => void;
   onProjectUpdate: (project: ProjectState) => void;
 }) {
   const [view, setView] = React.useState<WorkspaceView>({ kind: "inbox" });
@@ -1353,30 +1367,41 @@ function Workspace({
                 <strong>Brand analysis</strong>
               </span>
             </button>
-            {readyChannels.length ? (
-              <>
-                <p className="dropdown-heading">Channels</p>
-                {readyChannels.map((setup) => {
-                  const option = channelOption(setup.id);
-                  return (
-                    <button
-                      className="dropdown-item"
-                      key={setup.id}
-                      type="button"
-                      onClick={() => {
-                        setView({ kind: "channel", channelId: setup.id });
-                        setOpenMenu(null);
-                      }}
-                    >
-                      <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
-                      <span className="dropdown-item-copy">
-                        <strong>{setup.name}</strong>
-                      </span>
-                    </button>
-                  );
-                })}
-              </>
-            ) : null}
+            <p className="dropdown-heading">Channels</p>
+            {readyChannels.map((setup) => {
+              const option = channelOption(setup.id);
+              return (
+                <button
+                  className="dropdown-item"
+                  key={setup.id}
+                  type="button"
+                  onClick={() => {
+                    setView({ kind: "channel", channelId: setup.id });
+                    setOpenMenu(null);
+                  }}
+                >
+                  <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
+                  <span className="dropdown-item-copy">
+                    <strong>{setup.name}</strong>
+                  </span>
+                </button>
+              );
+            })}
+            <button
+              className="dropdown-item"
+              type="button"
+              onClick={() => {
+                setOpenMenu(null);
+                onAddChannels();
+              }}
+            >
+              <span className="dropdown-plus" aria-hidden="true">
+                +
+              </span>
+              <span className="dropdown-item-copy">
+                <strong>Add channels</strong>
+              </span>
+            </button>
             <div className="dropdown-divider" />
             <button
               className="dropdown-item"
