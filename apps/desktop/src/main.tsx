@@ -97,7 +97,10 @@ function App() {
   }, [project]);
 
   React.useEffect(() => {
-    api.listAgentProviders().then(setAgentProviders).catch(() => undefined);
+    api
+      .listAgentProviders()
+      .then(setAgentProviders)
+      .catch(() => undefined);
     let cancelled = false;
     api
       .loadLastProject()
@@ -893,10 +896,7 @@ function ChannelsStep({
           const isChecking = checkingChannelId === channel.id;
           return (
             <div
-              className={[
-                "channel-select-row",
-                isSelected ? "is-selected" : "",
-              ]
+              className={["channel-select-row", isSelected ? "is-selected" : ""]
                 .filter(Boolean)
                 .join(" ")}
               key={channel.id}
@@ -1011,7 +1011,11 @@ function ChannelAnalysisStep({
     onError(null);
     try {
       setSelectedDoc(
-        await api.loadChannelContextDoc(project.config.path, channelId, fileName),
+        await api.loadChannelContextDoc(
+          project.config.path,
+          channelId,
+          fileName,
+        ),
       );
     } catch (err) {
       onError(String(err));
@@ -1066,7 +1070,9 @@ function ChannelAnalysisStep({
                       className="channel-file-chip"
                       key={doc.fileName}
                       type="button"
-                      onClick={() => void openChannelDoc(setup.id, doc.fileName)}
+                      onClick={() =>
+                        void openChannelDoc(setup.id, doc.fileName)
+                      }
                       disabled={!exists}
                     >
                       <span className="document-icon" aria-hidden="true">
@@ -1135,7 +1141,11 @@ function Workspace({
     onError(null);
     try {
       setSelectedDoc(
-        await api.loadChannelContextDoc(project.config.path, channelId, fileName),
+        await api.loadChannelContextDoc(
+          project.config.path,
+          channelId,
+          fileName,
+        ),
       );
     } catch (err) {
       onError(String(err));
@@ -1273,7 +1283,10 @@ function Workspace({
 function DocModal({ doc, onClose }: { doc: ContextDoc; onClose: () => void }) {
   return (
     <div className="doc-modal-backdrop" onClick={onClose}>
-      <article className="doc-modal" onClick={(event) => event.stopPropagation()}>
+      <article
+        className="doc-modal"
+        onClick={(event) => event.stopPropagation()}
+      >
         <button
           className="modal-close"
           type="button"

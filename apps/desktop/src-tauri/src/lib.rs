@@ -366,7 +366,6 @@ const RPC_SESSION_PROMPT_ID: i64 = 3;
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            detect_agent_provider,
             list_agent_providers,
             select_agent_provider,
             default_project_path,
@@ -388,11 +387,6 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running GTM Agent");
-}
-
-#[tauri::command]
-fn detect_agent_provider() -> AppResult<AgentProviderStatus> {
-    selected_provider_status()
 }
 
 #[tauri::command]
@@ -569,7 +563,10 @@ fn select_chrome_profile(project_path: String, profile_id: String) -> AppResult<
 }
 
 #[tauri::command]
-fn set_selected_channels(project_path: String, channel_ids: Vec<String>) -> AppResult<ProjectState> {
+fn set_selected_channels(
+    project_path: String,
+    channel_ids: Vec<String>,
+) -> AppResult<ProjectState> {
     let path = PathBuf::from(project_path);
     for channel_id in &channel_ids {
         channel_def(channel_id)?;
@@ -922,9 +919,9 @@ fn read_chrome_profiles() -> AppResult<Vec<ChromeProfile>> {
         .iter()
         .filter(|profile| session_count(profile) > 0 && !profile.is_default)
         .max_by(|a, b| {
-            session_count(a).cmp(&session_count(b)).then_with(|| {
-                chrome_profile_sort_key(&b.id).cmp(&chrome_profile_sort_key(&a.id))
-            })
+            session_count(a)
+                .cmp(&session_count(b))
+                .then_with(|| chrome_profile_sort_key(&b.id).cmp(&chrome_profile_sort_key(&a.id)))
         })
         .or_else(|| profiles.iter().find(|profile| session_count(profile) > 0))
         .or_else(|| profiles.iter().find(|profile| profile.is_default))

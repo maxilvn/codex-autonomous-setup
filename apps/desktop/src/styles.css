@@ -248,8 +248,12 @@ input:focus {
   position: relative;
   overflow: hidden;
   border-left: 1px solid #f0f0f0;
-  background:
-    radial-gradient(120% 90% at 20% 12%, #fdfdfd 0%, #f6f6f7 52%, #efeff1 100%);
+  background: radial-gradient(
+    120% 90% at 20% 12%,
+    #fdfdfd 0%,
+    #f6f6f7 52%,
+    #efeff1 100%
+  );
 }
 
 .onboard-preview-mock {

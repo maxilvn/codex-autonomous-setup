@@ -21,21 +21,6 @@ function call<T>(command: string, args?: Record<string, unknown>) {
 }
 
 export const api = {
-  detectAgentProvider() {
-    if (!hasTauriBridge()) {
-      return Promise.resolve<AgentProviderStatus>({
-        id: "desktop",
-        title: "Agent",
-        command: "",
-        args: [],
-        enabled: false,
-        selected: false,
-        available: false,
-        error: "Open the desktop app to use an agent.",
-      });
-    }
-    return call<AgentProviderStatus>("detect_agent_provider");
-  },
   listAgentProviders() {
     if (!hasTauriBridge()) {
       return Promise.resolve<AgentProviderStatus[]>([
