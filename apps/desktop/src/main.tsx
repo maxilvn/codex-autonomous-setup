@@ -1029,7 +1029,7 @@ function ChannelAnalysisStep({
         <p>
           {allReady
             ? "Channel memory is ready for draft-first outreach. You can review each file below."
-            : `${project.agentProvider.title} opens each account through your Chrome profile and writes the channel memory files.`}
+            : `${project.agentProvider.title} opens a dedicated Chrome window with your signed-in accounts and writes the channel memory files. You can watch it work.`}
         </p>
       </div>
 

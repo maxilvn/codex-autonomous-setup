@@ -688,6 +688,34 @@ fn run_channel_analysis(
     let run_for_thread = run.clone();
     let chrome_profile_id = read_project_settings(&path).chrome_profile_id;
     thread::spawn(move || {
+        let browser_dir = chrome_profile_id
+            .as_deref()
+            .filter(|_| resolve_command("npx").is_some())
+            .and_then(|profile_id| match seed_browser_user_data_dir(profile_id) {
+                Ok(dir) => {
+                    let _ = append_event(
+                        &path,
+                        "browser.session_prepared",
+                        "Browser session prepared from the selected Chrome profile",
+                        serde_json::json!({ "runId": run_id, "chromeProfileId": profile_id }),
+                    );
+                    Some(dir)
+                }
+                Err(err) => {
+                    let _ = append_event(
+                        &path,
+                        "browser.session_unavailable",
+                        &format!("Browser session unavailable: {err}"),
+                        serde_json::json!({ "runId": run_id, "chromeProfileId": profile_id }),
+                    );
+                    None
+                }
+            });
+        let mcp_servers = browser_dir
+            .as_deref()
+            .map(|dir| vec![browser_mcp_server(dir)])
+            .unwrap_or_default();
+
         let mut first_error: Option<String> = None;
         for channel in &channels {
             let status = read_channel_status(&path, channel.id);
@@ -695,9 +723,19 @@ fn run_channel_analysis(
                 &path,
                 &run_for_thread,
                 &provider,
-                &channel_analysis_prompt(&config, channel, &status, chrome_profile_id.as_deref()),
+                &channel_analysis_prompt(
+                    &config,
+                    channel,
+                    &status,
+                    chrome_profile_id.as_deref(),
+                    !mcp_servers.is_empty(),
+                ),
                 &format!("{} account analysis", channel.name),
+                &mcp_servers,
             );
+            if let Some(dir) = browser_dir.as_deref() {
+                kill_browser_processes(dir);
+            }
             let reported = read_channel_status(&path, channel.id);
             let next_status = match &result {
                 Ok(()) => ChannelStatus {
@@ -733,6 +771,10 @@ fn run_channel_analysis(
                 "project-updated",
                 serde_json::json!({ "projectPath": path.to_string_lossy(), "runId": run_id }),
             );
+        }
+
+        if let Some(dir) = browser_dir.as_deref() {
+            cleanup_browser_user_data_dir(dir);
         }
 
         let mut finished = run_for_thread.clone();
@@ -1027,15 +1069,18 @@ fn channel_cookie_count_query(channel: &ChannelDef) -> String {
     )
 }
 
-fn copy_profile_cookies(profile_id: &str) -> AppResult<Option<PathBuf>> {
+fn profile_cookies_path(profile_id: &str) -> AppResult<Option<PathBuf>> {
     let user_data_dir = chrome_user_data_dir()?;
-    let cookies_path = [
+    Ok([
         user_data_dir.join(profile_id).join("Network/Cookies"),
         user_data_dir.join(profile_id).join("Cookies"),
     ]
     .into_iter()
-    .find(|path| path.exists());
-    let Some(cookies_path) = cookies_path else {
+    .find(|path| path.exists()))
+}
+
+fn copy_profile_cookies(profile_id: &str) -> AppResult<Option<PathBuf>> {
+    let Some(cookies_path) = profile_cookies_path(profile_id)? else {
         return Ok(None);
     };
     let temp_path = std::env::temp_dir().join(format!(
@@ -1044,6 +1089,52 @@ fn copy_profile_cookies(profile_id: &str) -> AppResult<Option<PathBuf>> {
     ));
     fs::copy(&cookies_path, &temp_path)?;
     Ok(Some(temp_path))
+}
+
+fn seed_browser_user_data_dir(profile_id: &str) -> AppResult<PathBuf> {
+    let Some(cookies_path) = profile_cookies_path(profile_id)? else {
+        return Err(AppError::Open(format!(
+            "no Chrome cookies found for profile {profile_id}"
+        )));
+    };
+    let user_data_dir =
+        std::env::temp_dir().join(format!("gtm-agent-browser-{}", Uuid::new_v4().simple()));
+    fs::create_dir_all(user_data_dir.join("Default/Network"))?;
+    fs::copy(&cookies_path, user_data_dir.join("Default/Network/Cookies"))?;
+    fs::copy(&cookies_path, user_data_dir.join("Default/Cookies"))?;
+    fs::write(user_data_dir.join("First Run"), "")?;
+    Ok(user_data_dir)
+}
+
+fn kill_browser_processes(user_data_dir: &Path) {
+    if let Some(marker) = user_data_dir.file_name().and_then(|name| name.to_str()) {
+        if marker.starts_with("gtm-agent-browser-") {
+            let _ = Command::new("pkill").arg("-f").arg(marker).status();
+        }
+    }
+}
+
+fn cleanup_browser_user_data_dir(user_data_dir: &Path) {
+    kill_browser_processes(user_data_dir);
+    thread::sleep(std::time::Duration::from_millis(500));
+    let _ = fs::remove_dir_all(user_data_dir);
+}
+
+fn browser_mcp_server(user_data_dir: &Path) -> Value {
+    serde_json::json!({
+        "name": "chrome-devtools",
+        "command": "npx",
+        "args": [
+            "-y",
+            "chrome-devtools-mcp@latest",
+            "--userDataDir",
+            user_data_dir.to_string_lossy(),
+            "--viewport",
+            "1280x900",
+            "--ignore-default-chrome-arg=--use-mock-keychain",
+        ],
+        "env": [],
+    })
 }
 
 fn run_cookie_queries(cookies_db: &Path, queries: &str) -> AppResult<Vec<i64>> {
@@ -1106,6 +1197,7 @@ fn execute_initial_analysis(
         provider,
         &initial_analysis_prompt(config),
         "Initial analysis",
+        &[],
     )
 }
 
@@ -1115,6 +1207,7 @@ fn execute_agent_turn(
     provider: &AgentProvider,
     prompt: &str,
     task_label: &str,
+    mcp_servers: &[Value],
 ) -> AppResult<()> {
     let binary = resolve_command(&provider.command)
         .ok_or_else(|| AppError::Agent(format!("{} command not found", provider.command)))?;
@@ -1186,7 +1279,7 @@ fn execute_agent_turn(
             let response = if message.get("method").and_then(Value::as_str)
                 == Some("session/request_permission")
             {
-                permission_rejected_response(request_id, &message)
+                permission_response(request_id, &message)
             } else {
                 unsupported_server_request_response(request_id)
             };
@@ -1195,7 +1288,11 @@ fn execute_agent_turn(
         }
 
         if rpc_id_is(&message, RPC_INITIALIZE_ID) {
-            send_rpc(&mut stdin, &acp_session_new_request(project), &log_file)?;
+            send_rpc(
+                &mut stdin,
+                &acp_session_new_request(project, mcp_servers),
+                &log_file,
+            )?;
             continue;
         }
 
@@ -1307,14 +1404,14 @@ fn acp_initialize_request() -> Value {
     })
 }
 
-fn acp_session_new_request(project: &Path) -> Value {
+fn acp_session_new_request(project: &Path, mcp_servers: &[Value]) -> Value {
     serde_json::json!({
         "jsonrpc": "2.0",
         "id": RPC_SESSION_NEW_ID,
         "method": "session/new",
         "params": {
             "cwd": project.to_string_lossy(),
-            "mcpServers": [],
+            "mcpServers": mcp_servers,
         },
     })
 }
@@ -1334,19 +1431,19 @@ fn acp_session_prompt_request(session_id: &str, prompt: &str) -> Value {
     })
 }
 
-fn permission_rejected_response(id: Value, request: &Value) -> Value {
-    let reject_option = request
+fn permission_response(id: Value, request: &Value) -> Value {
+    let allow_option = request
         .pointer("/params/options")
         .and_then(Value::as_array)
         .and_then(|options| {
             options.iter().find_map(|option| {
                 let kind = option.get("kind").and_then(Value::as_str);
                 let option_id = option.get("optionId").and_then(Value::as_str);
-                matches!(kind, Some("reject_once") | Some("reject_always")).then_some(option_id)?
+                matches!(kind, Some("allow_once") | Some("allow_always")).then_some(option_id)?
             })
         });
 
-    if let Some(option_id) = reject_option {
+    if let Some(option_id) = allow_option {
         return serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -2331,6 +2428,7 @@ fn channel_analysis_prompt(
     channel: &ChannelDef,
     status: &ChannelStatus,
     selected_chrome_profile_id: Option<&str>,
+    has_browser_mcp: bool,
 ) -> String {
     let channel_id = channel.id;
     let channel_name = channel.name;
@@ -2357,6 +2455,15 @@ fn channel_analysis_prompt(
         "hacker-news" => "Inspect the signed-in Hacker News account: username, karma, about text, recent submissions, and comments (news.ycombinator.com/user?id=<username>).",
         _ => "Inspect the signed-in account: profile, recent posts, and replies.",
     };
+    let browser_instructions = if has_browser_mcp {
+        format!(
+            "This session includes the `chrome-devtools` MCP server. Its browser tools (new_page, navigate_page, take_snapshot, take_screenshot, click, and related tools) control a dedicated Chrome window that is already signed in with the user's {channel_name} session from the selected Chrome profile. Use these tools as your primary method: open {home_url}, confirm the signed-in account, then inspect it. {channel_inspection} Do not sign out, change account settings, or navigate to unrelated sites. If the browser tools fail repeatedly, fail open: complete the channel setup from the app-provided account metadata and the global brand files, noting in `profile.md`, `voice.md`, and `examples.md` that live account inspection was unavailable."
+        )
+    } else {
+        format!(
+            "If your ACP provider exposes browser, Chrome, or computer-control tools, open {home_url} through the signed-in Chrome profile `{chrome_profile_id}` and use it to inspect the account. {channel_inspection} If browser tools are unavailable, fail open: complete the channel setup from the app-provided account metadata and the global brand files, explicitly noting in `profile.md`, `voice.md`, and `examples.md` that live account inspection was unavailable and should be refreshed after browser tools are configured."
+        )
+    };
     format!(
         r#"Configure {channel_name} outreach for {account} in this GTM workspace.
 
@@ -2373,7 +2480,7 @@ Verified at: {checked_at}
 Goal:
 Configure the {channel_name} channel for draft-first outreach. Do not post, like, follow, send, or publicly interact. Only inspect the logged-in account and write local channel context files.
 
-The app has already verified the selected Chrome profile has an authenticated {channel_name} session. Do not spend the run checking whether login exists. If your ACP provider exposes browser, Chrome, or computer-control tools (for example the Codex Chrome extension), open {home_url} through the signed-in Chrome profile `{chrome_profile_id}` and use it to inspect the account. {channel_inspection} If browser tools are unavailable, fail open: complete the channel setup from the app-provided account metadata and the global brand files, explicitly noting in `profile.md`, `voice.md`, and `examples.md` that live account inspection was unavailable and should be refreshed after browser tools are configured.
+The app has already verified the selected Chrome profile has an authenticated {channel_name} session. Do not spend the run checking whether login exists. {browser_instructions}
 
 Then rewrite only these files:
 - `.gtm-agent/channels/{channel_id}/profile.md`
@@ -2644,10 +2751,29 @@ mod tests {
 
     #[test]
     fn builds_acp_session_new_request() {
-        let request = acp_session_new_request(Path::new("/tmp/project"));
+        let request = acp_session_new_request(Path::new("/tmp/project"), &[]);
         assert_eq!(request["method"], "session/new");
         assert_eq!(request["params"]["cwd"], "/tmp/project");
         assert_eq!(request["params"]["mcpServers"], serde_json::json!([]));
+
+        let server = browser_mcp_server(Path::new("/tmp/gtm-agent-browser-test"));
+        let request = acp_session_new_request(Path::new("/tmp/project"), &[server]);
+        assert_eq!(
+            request["params"]["mcpServers"][0]["name"],
+            "chrome-devtools"
+        );
+        assert_eq!(request["params"]["mcpServers"][0]["command"], "npx");
+    }
+
+    #[test]
+    fn builds_browser_mcp_server_config() {
+        let server = browser_mcp_server(Path::new("/tmp/gtm-agent-browser-abc"));
+        let args = server["args"].as_array().unwrap();
+        assert!(args.iter().any(|arg| arg == "chrome-devtools-mcp@latest"));
+        assert!(args.iter().any(|arg| arg == "/tmp/gtm-agent-browser-abc"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == "--ignore-default-chrome-arg=--use-mock-keychain"));
     }
 
     #[test]
@@ -2685,7 +2811,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_acp_permission_requests() {
+    fn approves_acp_permission_requests() {
         let request = serde_json::json!({
             "id": 8,
             "method": "session/request_permission",
@@ -2696,9 +2822,21 @@ mod tests {
                 ]
             },
         });
-        let response = permission_rejected_response(serde_json::json!(8), &request);
+        let response = permission_response(serde_json::json!(8), &request);
         assert_eq!(response["result"]["outcome"]["outcome"], "selected");
-        assert_eq!(response["result"]["outcome"]["optionId"], "reject-once");
+        assert_eq!(response["result"]["outcome"]["optionId"], "allow-once");
+
+        let no_allow_option = serde_json::json!({
+            "id": 9,
+            "method": "session/request_permission",
+            "params": {
+                "options": [
+                    { "optionId": "reject-once", "name": "Reject", "kind": "reject_once" }
+                ]
+            },
+        });
+        let response = permission_response(serde_json::json!(9), &no_allow_option);
+        assert_eq!(response["result"]["outcome"]["outcome"], "cancelled");
     }
 
     #[test]
@@ -3187,11 +3325,21 @@ mod tests {
             channel_def("reddit").unwrap(),
             &ChannelStatus::empty(),
             Some("Profile 3"),
+            true,
         );
-        assert!(prompt.contains("Codex Chrome extension"));
-        assert!(prompt.contains("Chrome profile `Profile 3`"));
+        assert!(prompt.contains("`chrome-devtools` MCP server"));
         assert!(prompt.contains(".gtm-agent/channels/reddit/profile.md"));
         assert!(prompt.contains("https://www.reddit.com/"));
+
+        let fallback_prompt = channel_analysis_prompt(
+            &config,
+            channel_def("reddit").unwrap(),
+            &ChannelStatus::empty(),
+            Some("Profile 3"),
+            false,
+        );
+        assert!(fallback_prompt.contains("Chrome profile `Profile 3`"));
+        assert!(fallback_prompt.contains("fail open"));
     }
 
     #[test]
