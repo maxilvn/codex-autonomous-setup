@@ -5,6 +5,7 @@ import type {
   ContextDoc,
   ProjectState,
   RunState,
+  ScheduleConfig,
 } from "./types";
 
 function hasTauriBridge() {
@@ -21,21 +22,6 @@ function call<T>(command: string, args?: Record<string, unknown>) {
 }
 
 export const api = {
-  detectAgentProvider() {
-    if (!hasTauriBridge()) {
-      return Promise.resolve<AgentProviderStatus>({
-        id: "desktop",
-        title: "Agent",
-        command: "",
-        args: [],
-        enabled: false,
-        selected: false,
-        available: false,
-        error: "Open the desktop app to use an agent.",
-      });
-    }
-    return call<AgentProviderStatus>("detect_agent_provider");
-  },
   listAgentProviders() {
     if (!hasTauriBridge()) {
       return Promise.resolve<AgentProviderStatus[]>([
@@ -143,11 +129,34 @@ export const api = {
   listChromeProfiles() {
     return call<ChromeProfile[]>("list_chrome_profiles");
   },
-  verifyXLogin(projectPath: string, profileId?: string | null) {
-    return call<ProjectState>("verify_x_login", { projectPath, profileId });
+  selectChromeProfile(projectPath: string, profileId: string) {
+    return call<ProjectState>("select_chrome_profile", {
+      projectPath,
+      profileId,
+    });
   },
-  runXAccountAnalysis(projectPath: string) {
-    return call<RunState>("run_x_account_analysis", { projectPath });
+  setSelectedChannels(projectPath: string, channelIds: string[]) {
+    return call<ProjectState>("set_selected_channels", {
+      projectPath,
+      channelIds,
+    });
+  },
+  setSchedules(projectPath: string, schedules: ScheduleConfig[]) {
+    return call<ProjectState>("set_schedules", { projectPath, schedules });
+  },
+  verifyChannelLogin(
+    projectPath: string,
+    channelId: string,
+    profileId?: string | null,
+  ) {
+    return call<ProjectState>("verify_channel_login", {
+      projectPath,
+      channelId,
+      profileId,
+    });
+  },
+  runChannelAnalysis(projectPath: string, channelIds: string[]) {
+    return call<RunState>("run_channel_analysis", { projectPath, channelIds });
   },
   openProjectInCodex(projectPath: string) {
     return call<void>("open_project_in_codex", { projectPath });
@@ -158,7 +167,7 @@ export const api = {
   openChromeUrl(url: string) {
     return call<void>("open_chrome_url", { url });
   },
-  openXLogin(profileId?: string | null) {
-    return call<void>("open_x_login", { profileId });
+  openChannelLogin(channelId: string, profileId?: string | null) {
+    return call<void>("open_channel_login", { channelId, profileId });
   },
 };

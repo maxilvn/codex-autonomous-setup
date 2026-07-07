@@ -1,5 +1,4 @@
 import React from "react";
-import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./lib/api";
@@ -10,7 +9,7 @@ import type {
   ContextDoc,
   ProjectState,
   RunActivity,
-  RunState,
+  ScheduleConfig,
 } from "./lib/types";
 import "./styles.css";
 
@@ -19,17 +18,78 @@ const logoBlack = new URL(
   import.meta.url,
 ).href;
 
+const codexIcon = new URL("./assets/agents/codex.png", import.meta.url).href;
+
+const ONBOARDING_STEPS = [
+  "url",
+  "agent",
+  "brand",
+  "browser",
+  "channels",
+  "analysis",
+] as const;
+
+type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
+type AppStep = OnboardingStep | "workspace";
+
+type ChannelOption = {
+  id: string;
+  name: string;
+  faviconUrl: string;
+  description: string;
+};
+
+const CHANNEL_OPTIONS: ChannelOption[] = [
+  {
+    id: "x",
+    name: "X",
+    faviconUrl: "https://x.com",
+    description:
+      "Founder-led posts and draft-first replies where builders follow builders.",
+  },
+  {
+    id: "reddit",
+    name: "Reddit",
+    faviconUrl: "https://reddit.com",
+    description:
+      "Community research and careful draft-first replies in niche subreddits.",
+  },
+  {
+    id: "hacker-news",
+    name: "Hacker News",
+    faviconUrl: "https://news.ycombinator.com",
+    description:
+      "Launches and technical discussion for a founder or developer audience.",
+  },
+];
+
+const CHANNEL_DOCS = [
+  { fileName: "profile.md", title: "Profile" },
+  { fileName: "voice.md", title: "Voice" },
+  { fileName: "rules.md", title: "Rules" },
+  { fileName: "examples.md", title: "Examples" },
+];
+
+const AGENT_PROVIDER_ICONS: Record<string, string> = {
+  codex: codexIcon,
+  claude: "https://www.google.com/s2/favicons?domain=claude.ai&sz=64",
+  cursor: "https://www.google.com/s2/favicons?domain=cursor.com&sz=64",
+  devin: "https://www.google.com/s2/favicons?domain=devin.ai&sz=64",
+  gemini: "https://www.google.com/s2/favicons?domain=gemini.google.com&sz=64",
+  copilot: "https://www.google.com/s2/favicons?domain=github.com&sz=64",
+};
+
+function channelOption(channelId: string) {
+  return CHANNEL_OPTIONS.find((channel) => channel.id === channelId);
+}
+
 function App() {
-  const [agentProvider, setAgentProvider] =
-    React.useState<AgentProviderStatus | null>(null);
+  const [project, setProject] = React.useState<ProjectState | null>(null);
+  const [step, setStep] = React.useState<AppStep>("url");
+  const [websiteUrl, setWebsiteUrl] = React.useState("");
   const [agentProviders, setAgentProviders] = React.useState<
     AgentProviderStatus[]
   >([]);
-  const [project, setProject] = React.useState<ProjectState | null>(null);
-  const [websiteUrl, setWebsiteUrl] = React.useState("");
-  const [onboardingStep, setOnboardingStep] = React.useState<"url" | "agent">(
-    "url",
-  );
   const [busy, setBusy] = React.useState(false);
   const [restoring, setRestoring] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -41,36 +101,17 @@ function App() {
 
   React.useEffect(() => {
     api
-      .detectAgentProvider()
-      .then(setAgentProvider)
-      .catch((err) => {
-        setAgentProvider({
-          id: "agent",
-          title: "Agent",
-          command: "",
-          args: [],
-          enabled: false,
-          selected: false,
-          available: false,
-          error: String(err),
-        });
-      });
-    api
       .listAgentProviders()
-      .then((providers) => {
-        setAgentProviders(providers);
-        setAgentProvider(
-          providers.find((provider) => provider.selected) ??
-            providers[0] ??
-            null,
-        );
-      })
+      .then(setAgentProviders)
       .catch(() => undefined);
     let cancelled = false;
     api
       .loadLastProject()
       .then((lastProject) => {
-        if (!cancelled && lastProject) setProject(lastProject);
+        if (cancelled || !lastProject) return;
+        setProject(lastProject);
+        setWebsiteUrl(lastProject.config.websiteUrl);
+        setStep(resumeStepForProject(lastProject));
       })
       .catch(() => undefined)
       .finally(() => {
@@ -98,22 +139,16 @@ function App() {
       window.clearInterval(timer);
       unlisten?.();
     };
-  }, [project, refreshProject]);
+  }, [project?.config.path, refreshProject]);
 
-  async function continueToAgentSelection() {
-    if (!websiteUrl.trim()) return;
-    setError(null);
-    setOnboardingStep("agent");
-  }
-
-  async function createProject(providerId = "codex") {
+  async function startProjectWithAgent(providerId: string) {
     setBusy(true);
     setError(null);
     try {
-      const selected = await api.selectAgentProvider(providerId);
-      setAgentProvider(selected);
+      await api.selectAgentProvider(providerId);
       const next = await api.createProject(websiteUrl);
       setProject(next);
+      setStep("brand");
       if (shouldRunInitialAnalysis(next)) {
         await api.runInitialAnalysis(next.config.path);
         setProject(await api.loadProject(next.config.path));
@@ -125,60 +160,268 @@ function App() {
     }
   }
 
+  async function chooseBrowserProfile(profileId: string) {
+    if (!project) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setProject(await api.selectChromeProfile(project.config.path, profileId));
+      setStep("channels");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startChannelAnalysis(channelIds: string[]) {
+    if (!project) return;
+    setBusy(true);
+    setError(null);
+    try {
+      let next = await api.setSelectedChannels(project.config.path, channelIds);
+      for (const channelId of channelIds) {
+        next = await api.verifyChannelLogin(
+          project.config.path,
+          channelId,
+          next.chromeProfileId,
+        );
+      }
+      setProject(next);
+      const unauthenticated = channelIds.filter((channelId) => {
+        const setup = next.channelSetups.find(
+          (candidate) => candidate.id === channelId,
+        );
+        return setup?.accountStatus !== "authenticated";
+      });
+      if (unauthenticated.length) {
+        setError(
+          `Sign in to ${unauthenticated
+            .map((channelId) => channelOption(channelId)?.name ?? channelId)
+            .join(", ")} in the selected Chrome profile first.`,
+        );
+        return;
+      }
+      const channelsToAnalyze = channelIds.filter((channelId) => {
+        const setup = next.channelSetups.find(
+          (candidate) => candidate.id === channelId,
+        );
+        return setup?.analysisStatus !== "ready";
+      });
+      if (channelsToAnalyze.length) {
+        await api.runChannelAnalysis(project.config.path, channelsToAnalyze);
+        setProject(await api.loadProject(project.config.path));
+      }
+      setStep("analysis");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retryInitialAnalysis() {
+    if (!project) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.runInitialAnalysis(project.config.path);
+      setProject(await api.loadProject(project.config.path));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retryChannelAnalysis(channelId: string) {
+    if (!project) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.verifyChannelLogin(
+        project.config.path,
+        channelId,
+        project.chromeProfileId,
+      );
+      await api.runChannelAnalysis(project.config.path, [channelId]);
+      setProject(await api.loadProject(project.config.path));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (restoring) {
+    return <main className="onboard" />;
+  }
+
+  if (step === "workspace" && project) {
+    return (
+      <Workspace
+        project={project}
+        error={error}
+        onError={setError}
+        onProjectUpdate={setProject}
+        onNewWebsite={() => {
+          setError(null);
+          setWebsiteUrl("");
+          setStep("url");
+        }}
+      />
+    );
+  }
+
+  const stepIndex = ONBOARDING_STEPS.indexOf(step as OnboardingStep);
+
   return (
-    <main className="shell">
-      {!project ? (
-        <section className="topbar">
-          <div className="brand">
-            <BrandMark />
-            <span>GTM Agent</span>
-          </div>
-        </section>
-      ) : null}
-
-      {error ? <div className="error">{error}</div> : null}
-
-      {!project && !restoring && onboardingStep === "url" ? (
-        <section className="onboarding">
-          <div className="onboarding-copy">
-            <p className="eyebrow">Brand workspace</p>
-            <h1>Website analysis</h1>
-          </div>
-          <div className="url-bar">
-            <UrlIcon websiteUrl={websiteUrl} />
-            <input
-              autoFocus
-              value={websiteUrl}
-              onChange={(event) => setWebsiteUrl(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !busy)
-                  void continueToAgentSelection();
-              }}
-              placeholder="website.com"
-            />
-            <button
-              onClick={continueToAgentSelection}
-              disabled={busy || !websiteUrl.trim()}
-            >
-              Analyze
-            </button>
-          </div>
-        </section>
-      ) : !project && !restoring && onboardingStep === "agent" ? (
-        <AgentSelectionStep
-          providers={agentProviders}
-          selectedProvider={agentProvider}
+    <OnboardingShell stepIndex={stepIndex} error={error}>
+      {step === "url" ? (
+        <UrlStep
           websiteUrl={websiteUrl}
           busy={busy}
-          onBack={() => setOnboardingStep("url")}
-          onUnavailable={(title) =>
-            setError(`${title} is not available yet. Use Codex for now.`)
-          }
-          onSelect={(providerId) => void createProject(providerId)}
+          onChange={setWebsiteUrl}
+          onContinue={() => {
+            if (!websiteUrl.trim()) return;
+            setError(null);
+            setStep("agent");
+          }}
         />
-      ) : project ? (
-        <ProjectView project={project} onProjectUpdate={setProject} />
+      ) : step === "agent" ? (
+        <AgentStep
+          providers={agentProviders}
+          websiteUrl={websiteUrl}
+          busy={busy}
+          onBack={() => setStep("url")}
+          onSelect={(providerId) => void startProjectWithAgent(providerId)}
+        />
+      ) : step === "brand" && project ? (
+        <BrandAnalysisStep
+          project={project}
+          busy={busy}
+          onRetry={() => void retryInitialAnalysis()}
+          onContinue={() => {
+            setError(null);
+            setStep("browser");
+          }}
+        />
+      ) : step === "browser" && project ? (
+        <BrowserStep
+          project={project}
+          busy={busy}
+          onError={setError}
+          onSelect={(profileId) => void chooseBrowserProfile(profileId)}
+        />
+      ) : step === "channels" && project ? (
+        <ChannelsStep
+          project={project}
+          busy={busy}
+          onError={setError}
+          onBack={() => setStep("browser")}
+          onProjectUpdate={setProject}
+          onStart={(channelIds) => void startChannelAnalysis(channelIds)}
+        />
+      ) : step === "analysis" && project ? (
+        <ChannelAnalysisStep
+          project={project}
+          onError={setError}
+          onRetry={(channelId) => void retryChannelAnalysis(channelId)}
+          onFinish={() => {
+            setError(null);
+            setStep("workspace");
+          }}
+        />
       ) : null}
+    </OnboardingShell>
+  );
+}
+
+function resumeStepForProject(project: ProjectState): AppStep {
+  if (!isBrandAnalysisComplete(project)) return "brand";
+  if (!project.chromeProfileId) return "browser";
+  const selected = project.selectedChannels;
+  if (!selected.length) return "channels";
+  const setups = selected.map((channelId) =>
+    project.channelSetups.find((setup) => setup.id === channelId),
+  );
+  if (setups.every((setup) => setup?.analysisStatus === "ready")) {
+    return "workspace";
+  }
+  if (
+    setups.some(
+      (setup) =>
+        setup?.analysisStatus === "running" ||
+        setup?.analysisStatus === "ready" ||
+        setup?.analysisStatus === "failed",
+    )
+  ) {
+    return "analysis";
+  }
+  return "channels";
+}
+
+function OnboardingShell({
+  stepIndex,
+  error,
+  children,
+}: {
+  stepIndex: number;
+  error: string | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <main className="onboard">
+      <section className="onboard-pane">
+        <div className="onboard-brand">
+          <BrandMark />
+          <span>GTM Agent</span>
+        </div>
+        <div className="onboard-content">
+          {children}
+          {error ? <p className="onboard-error">{error}</p> : null}
+        </div>
+        <div className="onboard-dots" aria-label="Onboarding progress">
+          {ONBOARDING_STEPS.map((step, index) => (
+            <span
+              className={[
+                "onboard-dot",
+                index === stepIndex ? "is-active" : "",
+                index < stepIndex ? "is-done" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              key={step}
+            />
+          ))}
+        </div>
+      </section>
+      <aside className="onboard-preview" aria-hidden="true">
+        <div className="onboard-preview-mock">
+          <div className="mock-topbar">
+            <span className="mock-pill" />
+            <span className="mock-pill mock-pill-short" />
+          </div>
+          <div className="mock-grid">
+            <div className="mock-sidebar">
+              <span className="mock-line mock-line-strong" />
+              <span className="mock-line" />
+              <span className="mock-line" />
+              <span className="mock-line mock-line-short" />
+            </div>
+            <div className="mock-main">
+              <span className="mock-line mock-line-strong" />
+              <div className="mock-cards">
+                <span className="mock-card" />
+                <span className="mock-card" />
+                <span className="mock-card" />
+              </div>
+              <span className="mock-line" />
+              <span className="mock-line mock-line-short" />
+            </div>
+          </div>
+        </div>
+      </aside>
     </main>
   );
 }
@@ -220,614 +463,1706 @@ function UrlIcon({ websiteUrl }: { websiteUrl: string }) {
   );
 }
 
-function AgentSelectionStep({
+function UrlStep({
+  websiteUrl,
+  busy,
+  onChange,
+  onContinue,
+}: {
+  websiteUrl: string;
+  busy: boolean;
+  onChange: (value: string) => void;
+  onContinue: () => void;
+}) {
+  return (
+    <div className="onboard-step">
+      <div className="onboard-copy">
+        <h1>Analyze your brand</h1>
+        <p>
+          Enter the website you want to market. GTM Agent turns it into source
+          documents for every channel.
+        </p>
+      </div>
+      <div className="url-bar">
+        <UrlIcon websiteUrl={websiteUrl} />
+        <input
+          autoFocus
+          value={websiteUrl}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !busy) onContinue();
+          }}
+          placeholder="website.com"
+        />
+        <button onClick={onContinue} disabled={busy || !websiteUrl.trim()}>
+          Continue
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AgentStep({
   providers,
-  selectedProvider,
   websiteUrl,
   busy,
   onBack,
   onSelect,
-  onUnavailable,
 }: {
   providers: AgentProviderStatus[];
-  selectedProvider: AgentProviderStatus | null;
   websiteUrl: string;
   busy: boolean;
   onBack: () => void;
   onSelect: (providerId: string) => void;
-  onUnavailable: (title: string) => void;
 }) {
-  const [selectedAgentId, setSelectedAgentId] = React.useState(
-    selectedProvider?.id ?? "codex",
+  const visibleProviders = providers.filter(
+    (provider) => provider.id !== "custom",
   );
-  const providerIds = new Set(providers.map((provider) => provider.id));
-  const providerOptions = AGENT_PROVIDER_OPTIONS.filter(
-    (option) => option.id === "codex" || providerIds.has(option.id),
+  const [selectedAgentId, setSelectedAgentId] = React.useState<string | null>(
+    null,
   );
-  const selectedOption =
-    providerOptions.find((option) => option.id === selectedAgentId) ??
-    providerOptions.find((option) => option.id === "codex");
 
   React.useEffect(() => {
-    setSelectedAgentId(selectedProvider?.id ?? "codex");
-  }, [selectedProvider?.id]);
+    if (selectedAgentId) return;
+    const preferred =
+      visibleProviders.find(
+        (provider) => provider.selected && provider.available,
+      ) ?? visibleProviders.find((provider) => provider.available);
+    if (preferred) setSelectedAgentId(preferred.id);
+  }, [visibleProviders, selectedAgentId]);
+
+  const selectedProvider = visibleProviders.find(
+    (provider) => provider.id === selectedAgentId && provider.available,
+  );
 
   return (
-    <section className="agent-onboarding">
-      <div className="onboarding-copy">
-        <p className="eyebrow">Agent provider</p>
+    <div className="onboard-step">
+      <div className="onboard-copy">
         <h1>Select your agent</h1>
-        <p className="agent-onboarding-subtitle">
+        <p>
           {displayHost(websiteUrl)} will be analyzed through the selected ACP
-          provider.
+          agent. Any installed agent works.
         </p>
       </div>
 
       <div className="agent-provider-list">
-        {providerOptions.map((option) => {
-          const isCodex = option.id === "codex";
-          const isSelected = selectedAgentId === option.id;
+        {visibleProviders.map((provider) => {
+          const isSelected = selectedAgentId === provider.id;
           return (
             <button
               className={[
                 "agent-provider-row",
-                isSelected ? "is-selected" : "",
-                !isCodex ? "is-disabled" : "",
+                isSelected && provider.available ? "is-selected" : "",
+                !provider.available ? "is-disabled" : "",
               ]
                 .filter(Boolean)
                 .join(" ")}
-              key={option.id}
+              key={provider.id}
               type="button"
               onClick={() => {
-                if (!isCodex) {
-                  onUnavailable(option.title);
-                  return;
-                }
-                setSelectedAgentId(option.id);
+                if (provider.available) setSelectedAgentId(provider.id);
               }}
-              disabled={busy}
+              disabled={busy || !provider.available}
             >
               <img
                 alt=""
                 className="agent-provider-icon"
-                src={option.faviconUrl}
+                src={
+                  AGENT_PROVIDER_ICONS[provider.id] ??
+                  AGENT_PROVIDER_ICONS.codex
+                }
               />
-              <strong>{option.title}</strong>
-              <span className={isCodex ? "agent-ready" : "agent-unavailable"}>
-                {isCodex ? "Available" : "Not available yet"}
+              <span className="agent-provider-main">
+                <strong>{provider.title}</strong>
+                {!provider.available ? (
+                  <em>
+                    {provider.error ??
+                      `Install \`${provider.command}\` to enable`}
+                  </em>
+                ) : provider.version ? (
+                  <em>{compactVersion(provider.version)}</em>
+                ) : null}
+              </span>
+              <span
+                className={
+                  provider.available ? "agent-ready" : "agent-unavailable"
+                }
+              >
+                {provider.available ? "Installed" : "Not installed"}
               </span>
             </button>
           );
         })}
       </div>
 
-      <div className="agent-onboarding-actions">
+      <div className="onboard-actions">
         <button className="secondary" type="button" onClick={onBack}>
           Back
         </button>
         <button
           type="button"
-          onClick={() => onSelect(selectedOption?.id ?? "codex")}
-          disabled={busy || selectedOption?.id !== "codex"}
+          onClick={() => selectedProvider && onSelect(selectedProvider.id)}
+          disabled={busy || !selectedProvider}
         >
-          {busy ? "Starting..." : "Select"}
+          {busy ? "Starting..." : "Continue"}
         </button>
       </div>
-    </section>
+    </div>
   );
 }
 
-const AGENT_PROVIDER_OPTIONS = [
-  {
-    id: "codex",
-    title: "Codex",
-    faviconUrl: "https://www.google.com/s2/favicons?domain=openai.com&sz=64",
-  },
-  {
-    id: "claude",
-    title: "Claude Code",
-    faviconUrl: "https://www.google.com/s2/favicons?domain=claude.ai&sz=64",
-  },
-  {
-    id: "cursor",
-    title: "Cursor",
-    faviconUrl: "https://www.google.com/s2/favicons?domain=cursor.com&sz=64",
-  },
-  {
-    id: "devin",
-    title: "Devin",
-    faviconUrl: "https://www.google.com/s2/favicons?domain=devin.ai&sz=64",
-  },
-  {
-    id: "gemini",
-    title: "Gemini",
-    faviconUrl:
-      "https://www.google.com/s2/favicons?domain=gemini.google.com&sz=64",
-  },
-  {
-    id: "copilot",
-    title: "Copilot",
-    faviconUrl: "https://www.google.com/s2/favicons?domain=github.com&sz=64",
-  },
-];
-
-function ProjectView({
+function BrandAnalysisStep({
   project,
-  onProjectUpdate,
+  busy,
+  onRetry,
+  onContinue,
 }: {
   project: ProjectState;
-  onProjectUpdate: (project: ProjectState) => void;
+  busy: boolean;
+  onRetry: () => void;
+  onContinue: () => void;
 }) {
+  const [isLogOpen, setIsLogOpen] = React.useState(false);
   const [selectedDoc, setSelectedDoc] = React.useState<ContextDoc | null>(null);
-  const [onboardingStep, setOnboardingStep] = React.useState<
-    "analysis" | "channels" | "dashboard"
-  >("analysis");
-  const [isCompanyPanelOpen, setIsCompanyPanelOpen] = React.useState(true);
-  const [activeChannelId, setActiveChannelId] = React.useState<string | null>(
-    null,
+  const logRef = React.useRef<HTMLDivElement | null>(null);
+  const run = project.latestRun;
+  const isRunning =
+    run?.kind === "initial_analysis" && run?.status === "running";
+  const isComplete = isBrandAnalysisComplete(project);
+  const runError =
+    run?.kind === "initial_analysis" ? (run?.error ?? null) : null;
+  const isStalled =
+    !isComplete && run?.kind === "initial_analysis" && run.status !== "running";
+  const competitors = extractCompetitors(
+    project.docs,
+    displayHost(project.config.websiteUrl),
   );
-  const [configuringChannelId, setConfiguringChannelId] = React.useState<
+  const steps = brandAnalysisSteps(
+    project.docs,
+    competitors,
+    isRunning,
+    isComplete,
+  );
+  const agentOutput = agentOutputActivity(project.runActivity);
+  const productDescription = extractProductDescription(project.docs);
+
+  React.useEffect(() => {
+    if (!isLogOpen || !logRef.current) return;
+    logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [isLogOpen, agentOutput.length, agentOutput.at(-1)?.message]);
+
+  return (
+    <div className="onboard-step">
+      <div className="onboard-copy">
+        <h1>{isComplete ? "Brand analysis ready" : "Analyzing your brand"}</h1>
+        <p>
+          {isComplete
+            ? productDescription
+            : `${project.agentProvider.title} is researching ${displayHost(
+                project.config.websiteUrl,
+              )} and writing the GTM source documents.`}
+        </p>
+      </div>
+
+      <div className="analysis-step-list" aria-label="Analysis progress">
+        {steps.map((step) => (
+          <div className={`analysis-step is-${step.status}`} key={step.title}>
+            <span className="analysis-step-icon" aria-hidden="true" />
+            <div>
+              <strong>{step.title}</strong>
+              <p>{step.statusLabel}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="channel-analysis-files" aria-label="Source documents">
+        {project.docs.map((doc) => {
+          const ready = hasDocumentContent(doc);
+          return (
+            <button
+              className="channel-file-chip"
+              key={doc.key}
+              type="button"
+              onClick={() => setSelectedDoc(doc)}
+              disabled={!ready}
+            >
+              <span className="document-icon" aria-hidden="true">
+                <svg viewBox="0 0 16 16" focusable="false">
+                  <path d="M4 1.75h5.2L12.75 5.3v8.95H4z" />
+                  <path d="M9 1.9v3.6h3.55M6 8h4M6 10.5h4" />
+                </svg>
+              </span>
+              {doc.title}
+            </button>
+          );
+        })}
+      </div>
+
+      {runError ? <p className="run-error">{runError}</p> : null}
+      {isStalled && !runError ? (
+        <p className="run-error">
+          The analysis ended before the source documents were written. Retry to
+          start a new run.
+        </p>
+      ) : null}
+
+      <div className="onboard-actions">
+        <button
+          className="secondary agent-log-toggle"
+          type="button"
+          onClick={() => setIsLogOpen((open) => !open)}
+        >
+          {isLogOpen ? "Hide agent log" : "Show agent log"}
+        </button>
+        {isStalled ? (
+          <button type="button" onClick={onRetry} disabled={busy}>
+            {busy ? "Starting..." : "Retry analysis"}
+          </button>
+        ) : (
+          <button type="button" onClick={onContinue} disabled={!isComplete}>
+            Continue
+          </button>
+        )}
+      </div>
+
+      {isLogOpen ? (
+        <div className="agent-log-panel">
+          <div className="activity-list agent-log-list" ref={logRef}>
+            {agentOutput.length ? (
+              agentOutput.map((item, index) => (
+                <article
+                  className="activity-item"
+                  key={`${item.title}-${index}`}
+                >
+                  <p>{item.message}</p>
+                </article>
+              ))
+            ) : (
+              <article className="activity-item">
+                <p>No visible agent messages yet.</p>
+              </article>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {selectedDoc ? (
+        <DocModal doc={selectedDoc} onClose={() => setSelectedDoc(null)} />
+      ) : null}
+    </div>
+  );
+}
+
+function BrowserStep({
+  project,
+  busy,
+  onError,
+  onSelect,
+}: {
+  project: ProjectState;
+  busy: boolean;
+  onError: (error: string | null) => void;
+  onSelect: (profileId: string) => void;
+}) {
+  const [profiles, setProfiles] = React.useState<ChromeProfile[]>([]);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [selectedProfileId, setSelectedProfileId] = React.useState<
     string | null
-  >(null);
+  >(project.chromeProfileId ?? null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    api
+      .listChromeProfiles()
+      .then((next) => {
+        if (cancelled) return;
+        setProfiles(next);
+        setSelectedProfileId(
+          (current) =>
+            current ??
+            next.find((profile) => profile.isRecommended)?.id ??
+            next[0]?.id ??
+            null,
+        );
+      })
+      .catch((err) => {
+        if (!cancelled) onError(String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <div className="onboard-step">
+      <div className="onboard-copy">
+        <h1>Choose your browser profile</h1>
+        <p>
+          GTM Agent works through your signed-in Chrome profile. Pick the one
+          with the accounts you use for {project.config.name}.
+        </p>
+      </div>
+
+      <div className="browser-profile-list">
+        {isLoading ? (
+          <p className="empty-note">Loading Chrome profiles...</p>
+        ) : profiles.length === 0 ? (
+          <p className="empty-note">
+            No Chrome profiles found. Install Google Chrome and sign in first.
+          </p>
+        ) : (
+          profiles.map((profile) => {
+            const detectedChannels = CHANNEL_OPTIONS.filter(
+              (channel) => profile.sessions?.[channel.id],
+            );
+            return (
+              <button
+                className={[
+                  "browser-profile-row",
+                  profile.id === selectedProfileId ? "is-selected" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                key={profile.id}
+                type="button"
+                onClick={() => setSelectedProfileId(profile.id)}
+                disabled={busy}
+              >
+                <ChromeProfileAvatar profile={profile} />
+                <span className="browser-profile-main">
+                  <strong>{profile.name}</strong>
+                  <em>{profileSubtitle(profile)}</em>
+                </span>
+                <span className="browser-profile-sessions">
+                  {detectedChannels.length ? (
+                    detectedChannels.map((channel) => (
+                      <span
+                        className="browser-session-chip"
+                        key={channel.id}
+                        title={`${channel.name} account detected`}
+                      >
+                        <UrlIcon websiteUrl={channel.faviconUrl} />
+                      </span>
+                    ))
+                  ) : (
+                    <em>No accounts detected</em>
+                  )}
+                </span>
+              </button>
+            );
+          })
+        )}
+      </div>
+
+      <div className="onboard-actions">
+        <span />
+        <button
+          type="button"
+          onClick={() => selectedProfileId && onSelect(selectedProfileId)}
+          disabled={busy || !selectedProfileId}
+        >
+          {busy ? "Saving..." : "Continue"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ChannelsStep({
+  project,
+  busy,
+  onError,
+  onBack,
+  onProjectUpdate,
+  onStart,
+}: {
+  project: ProjectState;
+  busy: boolean;
+  onError: (error: string | null) => void;
+  onBack: () => void;
+  onProjectUpdate: (project: ProjectState) => void;
+  onStart: (channelIds: string[]) => void;
+}) {
+  const [profiles, setProfiles] = React.useState<ChromeProfile[]>([]);
   const [checkingChannelId, setCheckingChannelId] = React.useState<
     string | null
   >(null);
-  const [analyzingChannelId, setAnalyzingChannelId] = React.useState<
-    string | null
-  >(null);
-  const [chromeProfiles, setChromeProfiles] = React.useState<ChromeProfile[]>(
-    [],
+  const [selectedChannelIds, setSelectedChannelIds] = React.useState<string[]>(
+    project.selectedChannels,
   );
-  const [selectedChromeProfileId, setSelectedChromeProfileId] = React.useState<
-    string | null
-  >(null);
-  const [isLoadingChromeProfiles, setIsLoadingChromeProfiles] =
-    React.useState(false);
-  const [channelError, setChannelError] = React.useState<string | null>(null);
-  const run = project.latestRun;
-  const isInitialAnalysisRun = run?.kind === "initial_analysis";
-  const isInitialAnalysisRunning =
-    isInitialAnalysisRun && run?.status === "running";
-  const activity =
-    isInitialAnalysisRun && project.runActivity.length
-      ? project.runActivity
-      : [
-          {
-            kind: "idle",
-            title: "Waiting",
-            message: "Analysis updates will appear here.",
-          },
-        ];
-  const agentOutput = agentOutputActivity(activity);
-  const isAnalysisComplete =
-    !isInitialAnalysisRunning && project.docs.every(hasDocumentContent);
-  const host = displayHost(project.config.websiteUrl);
-  const productDescription = extractProductDescription(project.docs);
-  const competitors = extractCompetitors(project.docs, host);
-  const channels = extractMarketingChannels(project.docs);
-  const channelSetups = new Map(
-    project.channelSetups.map((setup) => [setup.id, setup]),
-  );
-  const activeChannel = channels.find(
-    (channel) => channel.id === activeChannelId,
-  );
-  const activeChannelSetup = activeChannelId
-    ? (channelSetups.get(activeChannelId) ?? null)
-    : null;
-  const showChannelDetail = activeChannel?.id === "x";
-  const hasConfiguredChannel = project.channelSetups.some(
-    (setup) => setup.status === "ready",
-  );
+  const profileId = project.chromeProfileId ?? null;
+  const selectedProfile = profiles.find((profile) => profile.id === profileId);
 
-  async function configureChannel(channelId: string) {
-    setChannelError(null);
-    if (channelId !== "x") {
-      setActiveChannelId(null);
-      setChannelError(`${channelName(channelId)} setup is coming next.`);
-      return;
+  const refreshProfiles = React.useCallback(() => {
+    api
+      .listChromeProfiles()
+      .then(setProfiles)
+      .catch((err) => onError(String(err)));
+  }, [onError]);
+
+  React.useEffect(() => {
+    refreshProfiles();
+  }, [refreshProfiles]);
+
+  React.useEffect(() => {
+    if (selectedChannelIds.length || !selectedProfile) return;
+    const detected = CHANNEL_OPTIONS.filter(
+      (channel) => selectedProfile.sessions?.[channel.id],
+    ).map((channel) => channel.id);
+    if (detected.length) setSelectedChannelIds(detected);
+  }, [selectedProfile]);
+
+  function channelDetected(channelId: string) {
+    const setup = project.channelSetups.find(
+      (candidate) => candidate.id === channelId,
+    );
+    if (
+      setup?.accountStatus === "authenticated" &&
+      setup?.chromeProfileId === profileId
+    ) {
+      return true;
     }
-    setActiveChannelId(channelId);
-    setConfiguringChannelId(channelId);
-    try {
-      const next = await api.configureChannel(project.config.path, channelId);
-      onProjectUpdate(next);
-    } catch (err) {
-      setChannelError(String(err));
-    } finally {
-      setConfiguringChannelId(null);
-    }
+    return Boolean(selectedProfile?.sessions?.[channelId]);
   }
 
-  async function analyzeXAccount() {
-    setChannelError(null);
-    setAnalyzingChannelId("x");
+  async function checkChannel(channelId: string) {
+    setCheckingChannelId(channelId);
+    onError(null);
     try {
-      await api.runXAccountAnalysis(project.config.path);
-      onProjectUpdate(await api.loadProject(project.config.path));
-    } catch (err) {
-      setChannelError(String(err));
-    } finally {
-      setAnalyzingChannelId(null);
-    }
-  }
-
-  async function selectXProfileForAnalysis(
-    profileId = selectedChromeProfileId,
-  ) {
-    if (!profileId) {
-      setChannelError("Choose a Chrome profile first.");
-      return;
-    }
-    setChannelError(null);
-    setCheckingChannelId("x");
-    try {
-      const checkedProject = await api.verifyXLogin(
-        project.config.path,
-        profileId,
+      onProjectUpdate(
+        await api.verifyChannelLogin(project.config.path, channelId, profileId),
       );
-      onProjectUpdate(checkedProject);
-      const xSetup = checkedProject.channelSetups.find(
-        (setup) => setup.id === "x",
-      );
-      if (xSetup?.accountStatus === "authenticated") {
-        await analyzeXAccount();
-      }
+      refreshProfiles();
     } catch (err) {
-      setChannelError(String(err));
+      onError(String(err));
     } finally {
       setCheckingChannelId(null);
     }
   }
 
-  async function openXLogin(profileId = selectedChromeProfileId) {
-    setChannelError(null);
+  async function signIn(channelId: string) {
+    onError(null);
     try {
-      await api.openXLogin(profileId);
+      await api.openChannelLogin(channelId, profileId);
     } catch (err) {
-      setChannelError(String(err));
+      onError(String(err));
     }
   }
 
-  async function openXChannelDoc(fileName: string) {
-    setChannelError(null);
-    try {
-      setSelectedDoc(
-        await api.loadChannelContextDoc(project.config.path, "x", fileName),
-      );
-    } catch (err) {
-      setChannelError(String(err));
-    }
+  function toggleChannel(channelId: string) {
+    setSelectedChannelIds((current) =>
+      current.includes(channelId)
+        ? current.filter((candidate) => candidate !== channelId)
+        : [...current, channelId],
+    );
   }
 
-  React.useEffect(() => {
-    setOnboardingStep(isAnalysisComplete ? "channels" : "analysis");
-    setSelectedDoc(null);
-    setIsCompanyPanelOpen(!isAnalysisComplete);
-  }, [project.config.id]);
-
-  React.useEffect(() => {
-    window.scrollTo({ top: 0, left: 0 });
-  }, [onboardingStep]);
-
-  React.useEffect(() => {
-    if (activeChannelId !== "x") {
-      return;
-    }
-    let isCancelled = false;
-    setIsLoadingChromeProfiles(true);
-    void api
-      .listChromeProfiles()
-      .then((profiles) => {
-        if (isCancelled) {
-          return;
-        }
-        setChromeProfiles(profiles);
-        setSelectedChromeProfileId((current) =>
-          current && profiles.some((profile) => profile.id === current)
-            ? current
-            : null,
-        );
-      })
-      .catch((err) => {
-        if (!isCancelled) {
-          setChannelError(String(err));
-        }
-      })
-      .finally(() => {
-        if (!isCancelled) {
-          setIsLoadingChromeProfiles(false);
-        }
-      });
-    return () => {
-      isCancelled = true;
-    };
-  }, [activeChannelId, activeChannelSetup?.chromeProfileId]);
-
-  const showChannels = onboardingStep === "channels";
-  const showDashboard = onboardingStep === "dashboard";
-  const workspaceClassName = [
-    "workspace",
-    showChannels || showDashboard ? "workspace-channels" : "workspace-analysis",
-    showDashboard ? "workspace-dashboard" : "",
-    showChannels || showDashboard ? "workspace-distribution" : "",
-    (showChannels || showDashboard) && isCompanyPanelOpen
-      ? "workspace-company-open"
-      : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const missingLogins = selectedChannelIds.filter(
+    (channelId) => !channelDetected(channelId),
+  );
 
   return (
-    <section className={workspaceClassName}>
-      <div className="analysis-grid">
-        <aside className="panel documents-card" aria-label="Company context">
-          <button
-            className="company-lockup"
-            type="button"
-            aria-expanded={isCompanyPanelOpen}
-            onClick={() => {
-              if (showChannels) {
-                setIsCompanyPanelOpen((open) => !open);
-              }
-            }}
-          >
-            <UrlIcon websiteUrl={project.config.websiteUrl} />
-            <div>
-              <strong>{project.config.name}</strong>
-            </div>
-          </button>
+    <div className="onboard-step">
+      <div className="onboard-copy">
+        <h1>Pick your channels</h1>
+        <p>
+          Choose where {project.config.name} should show up. GTM Agent checks
+          each account in the selected Chrome profile
+          {selectedProfile ? ` (${selectedProfile.name})` : ""}.
+        </p>
+      </div>
 
-          <div
-            className="documents-body"
-            aria-hidden={showChannels && !isCompanyPanelOpen}
-          >
-            <p className="product-description">{productDescription}</p>
-
-            <div className="documents-section">
-              <p className="eyebrow">Documents</p>
-            </div>
-            <div className="document-list">
-              {project.docs.map((doc) => (
-                <button
-                  className="document-row"
-                  key={doc.key}
-                  type="button"
-                  onClick={() => setSelectedDoc(doc)}
+      <div className="channel-select-list">
+        {CHANNEL_OPTIONS.map((channel) => {
+          const isSelected = selectedChannelIds.includes(channel.id);
+          const detected = channelDetected(channel.id);
+          const isChecking = checkingChannelId === channel.id;
+          return (
+            <div
+              className={["channel-select-row", isSelected ? "is-selected" : ""]
+                .filter(Boolean)
+                .join(" ")}
+              key={channel.id}
+            >
+              <button
+                className="channel-select-main"
+                type="button"
+                onClick={() => toggleChannel(channel.id)}
+                disabled={busy}
+                aria-pressed={isSelected}
+              >
+                <span className="channel-select-check" aria-hidden="true" />
+                <UrlIcon websiteUrl={channel.faviconUrl} />
+                <span className="channel-select-copy">
+                  <strong>{channel.name}</strong>
+                  <em>{channel.description}</em>
+                </span>
+              </button>
+              <div className="channel-select-status">
+                <span
+                  className={
+                    detected
+                      ? "channel-account-status is-detected"
+                      : "channel-account-status"
+                  }
                 >
-                  <span className="document-icon" aria-hidden="true">
-                    <svg viewBox="0 0 16 16" focusable="false">
-                      <path d="M4 1.75h5.2L12.75 5.3v8.95H4z" />
-                      <path d="M9 1.9v3.6h3.55M6 8h4M6 10.5h4" />
-                    </svg>
-                  </span>
-                  <span>{doc.title}</span>
-                  <span className="document-chevron" aria-hidden="true">
-                    ›
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            <div className="competitors-section">
-              <p className="eyebrow">Competitors</p>
-              {competitors.length ? (
-                <div className="competitor-list">
-                  {competitors.map((competitor) => (
+                  {isChecking
+                    ? "Checking..."
+                    : detected
+                      ? "Account detected"
+                      : "No account"}
+                </span>
+                {!detected ? (
+                  <>
                     <button
-                      className="competitor-row"
-                      key={competitor.url}
+                      className="secondary channel-inline-action"
                       type="button"
-                      onClick={() => void api.openExternalUrl(competitor.url)}
+                      onClick={() => void signIn(channel.id)}
+                      disabled={busy || isChecking}
                     >
-                      <UrlIcon websiteUrl={competitor.url} />
-                      <span>{competitor.host}</span>
+                      Sign in
                     </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="empty-note">
-                  Verified competitor links will appear here after analysis.
-                </p>
-              )}
+                    <button
+                      className="secondary channel-inline-action"
+                      type="button"
+                      onClick={() => void checkChannel(channel.id)}
+                      disabled={busy || isChecking}
+                    >
+                      Check
+                    </button>
+                  </>
+                ) : null}
+              </div>
             </div>
-          </div>
-        </aside>
+          );
+        })}
+      </div>
 
-        {!showChannels ? (
-          <AnalysisProgressCard
-            agentOutput={agentOutput}
-            channels={channels}
-            competitors={competitors}
-            docs={project.docs}
-            isComplete={isAnalysisComplete}
-            isRunning={isInitialAnalysisRunning}
-            productDescription={productDescription}
-            runError={run?.error ?? null}
-            onContinue={() => {
-              setOnboardingStep("channels");
-              setIsCompanyPanelOpen(false);
-            }}
+      <div className="onboard-actions">
+        <button className="secondary" type="button" onClick={onBack}>
+          Back
+        </button>
+        <button
+          type="button"
+          onClick={() => onStart(selectedChannelIds)}
+          disabled={
+            busy || !selectedChannelIds.length || missingLogins.length > 0
+          }
+        >
+          {busy
+            ? "Starting..."
+            : missingLogins.length
+              ? "Sign in to continue"
+              : "Start analysis"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ChannelAnalysisStep({
+  project,
+  onError,
+  onRetry,
+  onFinish,
+}: {
+  project: ProjectState;
+  onError: (error: string | null) => void;
+  onRetry: (channelId: string) => void;
+  onFinish: () => void;
+}) {
+  const [selectedDoc, setSelectedDoc] = React.useState<ContextDoc | null>(null);
+  const selectedChannels = project.selectedChannels.length
+    ? project.selectedChannels
+    : project.channelSetups
+        .filter((setup) => setup.analysisStatus !== "not_started")
+        .map((setup) => setup.id);
+  const setups = selectedChannels
+    .map((channelId) =>
+      project.channelSetups.find((setup) => setup.id === channelId),
+    )
+    .filter((setup): setup is ChannelSetup => Boolean(setup));
+  const allReady =
+    setups.length > 0 &&
+    setups.every((setup) => setup.analysisStatus === "ready");
+  const runError =
+    project.latestRun?.kind === "channel_analysis"
+      ? (project.latestRun?.error ?? null)
+      : null;
+
+  async function openChannelDoc(channelId: string, fileName: string) {
+    onError(null);
+    try {
+      setSelectedDoc(
+        await api.loadChannelContextDoc(
+          project.config.path,
+          channelId,
+          fileName,
+        ),
+      );
+    } catch (err) {
+      onError(String(err));
+    }
+  }
+
+  return (
+    <div className="onboard-step">
+      <div className="onboard-copy">
+        <h1>{allReady ? "Channels ready" : "Preparing your channels"}</h1>
+        <p>
+          {allReady
+            ? "Channel memory is ready for draft-first outreach. You can review each file below."
+            : `${project.agentProvider.title} opens a dedicated Chrome window with your signed-in accounts and writes the channel memory files. You can watch it work.`}
+        </p>
+      </div>
+
+      <div className="channel-analysis-list">
+        {setups.map((setup) => {
+          const option = channelOption(setup.id);
+          const isRunning = setup.analysisStatus === "running";
+          const isReady = setup.analysisStatus === "ready";
+          const isFailed = setup.analysisStatus === "failed";
+          return (
+            <article className="channel-analysis-card" key={setup.id}>
+              <div className="channel-analysis-head">
+                <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
+                <strong>{setup.name}</strong>
+                {isReady || isFailed ? (
+                  <span
+                    className={[
+                      "channel-analysis-chip",
+                      isReady ? "is-ready" : "is-failed",
+                    ].join(" ")}
+                  >
+                    {isReady ? "Ready" : "Failed"}
+                  </span>
+                ) : (
+                  <span />
+                )}
+              </div>
+              <div className="channel-analysis-files">
+                {CHANNEL_DOCS.map((doc) => {
+                  const exists = setup.files.includes(doc.fileName);
+                  return (
+                    <button
+                      className="channel-file-chip"
+                      key={doc.fileName}
+                      type="button"
+                      onClick={() =>
+                        void openChannelDoc(setup.id, doc.fileName)
+                      }
+                      disabled={!exists}
+                    >
+                      <span className="document-icon" aria-hidden="true">
+                        <svg viewBox="0 0 16 16" focusable="false">
+                          <path d="M4 1.75h5.2L12.75 5.3v8.95H4z" />
+                          <path d="M9 1.9v3.6h3.55M6 8h4M6 10.5h4" />
+                        </svg>
+                      </span>
+                      {doc.title}
+                    </button>
+                  );
+                })}
+              </div>
+              {isRunning ? (
+                <div className="analyzing-shimmer">Analyzing account...</div>
+              ) : isFailed ? (
+                <button
+                  className="secondary channel-inline-action"
+                  type="button"
+                  onClick={() => onRetry(setup.id)}
+                >
+                  Retry
+                </button>
+              ) : null}
+            </article>
+          );
+        })}
+      </div>
+
+      {runError ? <p className="run-error">{runError}</p> : null}
+
+      <div className="onboard-actions">
+        <span />
+        <button type="button" onClick={onFinish} disabled={!allReady}>
+          Finish
+        </button>
+      </div>
+
+      {selectedDoc ? (
+        <DocModal doc={selectedDoc} onClose={() => setSelectedDoc(null)} />
+      ) : null}
+    </div>
+  );
+}
+
+type WorkspaceView =
+  | { kind: "inbox" }
+  | { kind: "schedules" }
+  | { kind: "brand" }
+  | { kind: "channel"; channelId: string }
+  | { kind: "add-channels" };
+
+function accountDisplayName(project: ProjectState) {
+  const email = project.chromeProfile?.email;
+  if (email) {
+    const local = email.split("@")[0] ?? "";
+    if (local) return local[0].toUpperCase() + local.slice(1);
+  }
+  return project.chromeProfile?.name ?? "Account";
+}
+
+function AccountAvatar({ project }: { project: ProjectState }) {
+  const avatar = project.chromeProfile?.avatarDataUrl;
+  if (avatar) {
+    return (
+      <img
+        className="account-avatar account-avatar-image"
+        src={avatar}
+        alt=""
+      />
+    );
+  }
+  return (
+    <span className="account-avatar" aria-hidden="true">
+      {accountDisplayName(project)[0]?.toUpperCase() ?? "A"}
+    </span>
+  );
+}
+
+function DocIcon() {
+  return (
+    <span className="document-icon" aria-hidden="true">
+      <svg viewBox="0 0 16 16" focusable="false">
+        <path d="M4 1.75h5.2L12.75 5.3v8.95H4z" />
+        <path d="M9 1.9v3.6h3.55M6 8h4M6 10.5h4" />
+      </svg>
+    </span>
+  );
+}
+
+function Workspace({
+  project,
+  error,
+  onError,
+  onNewWebsite,
+  onProjectUpdate,
+}: {
+  project: ProjectState;
+  error: string | null;
+  onError: (error: string | null) => void;
+  onNewWebsite: () => void;
+  onProjectUpdate: (project: ProjectState) => void;
+}) {
+  const [view, setView] = React.useState<WorkspaceView>({ kind: "inbox" });
+  const [openMenu, setOpenMenu] = React.useState<"brand" | "account" | null>(
+    null,
+  );
+  const [selectedDoc, setSelectedDoc] = React.useState<ContextDoc | null>(null);
+  const [isComposerOpen, setIsComposerOpen] = React.useState(false);
+  const host = displayHost(project.config.websiteUrl);
+  const readyChannels = project.channelSetups.filter(
+    (setup) =>
+      project.selectedChannels.includes(setup.id) &&
+      setup.analysisStatus === "ready",
+  );
+
+  async function openChannelDoc(channelId: string, fileName: string) {
+    onError(null);
+    try {
+      setSelectedDoc(
+        await api.loadChannelContextDoc(
+          project.config.path,
+          channelId,
+          fileName,
+        ),
+      );
+    } catch (err) {
+      onError(String(err));
+    }
+  }
+
+  async function saveSchedules(schedules: ScheduleConfig[]) {
+    onError(null);
+    try {
+      onProjectUpdate(await api.setSchedules(project.config.path, schedules));
+    } catch (err) {
+      onError(String(err));
+    }
+  }
+
+  return (
+    <main className="home">
+      <header className="home-topbar">
+        <button
+          className="brand-switcher"
+          type="button"
+          onClick={() => setOpenMenu(openMenu === "brand" ? null : "brand")}
+          aria-expanded={openMenu === "brand"}
+        >
+          <UrlIcon websiteUrl={project.config.websiteUrl} />
+          <strong>{project.config.name}</strong>
+          <span className="menu-chevron" aria-hidden="true">
+            ⌄
+          </span>
+        </button>
+
+        <button
+          className="account-chip"
+          type="button"
+          onClick={() => setOpenMenu(openMenu === "account" ? null : "account")}
+          aria-expanded={openMenu === "account"}
+        >
+          <AccountAvatar project={project} />
+          <span className="account-chip-name">
+            {accountDisplayName(project)}
+          </span>
+          <span className="menu-chevron" aria-hidden="true">
+            ⌄
+          </span>
+        </button>
+
+        {openMenu ? (
+          <button
+            className="menu-backdrop"
+            type="button"
+            aria-label="Close menu"
+            onClick={() => setOpenMenu(null)}
           />
         ) : null}
 
-        <section
-          className="channel-setup"
-          aria-hidden={!showChannels || showDashboard}
-          aria-label="Marketing channel setup"
-        >
-          <div className="channel-header">
-            <p className="eyebrow">
-              {showChannelDetail ? "X setup" : "Distribution setup"}
-            </p>
-            <h2>
-              {showChannelDetail
-                ? "Configure X outreach"
-                : "Recommended marketing channels"}
-            </h2>
-            <p>
-              {showChannelDetail
-                ? "Prepare draft-first X outreach through the existing Chrome session. Codex will find posts, create reply drafts, and wait for approval."
-                : "Start with the channels that matched the strategy analysis. Connect or configure each one before moving into recurring GTM work."}
-            </p>
-          </div>
-
-          <div className="channel-list">
-            {channels
-              .filter((channel) => !showChannelDetail || channel.id === "x")
-              .map((channel) => (
-                <article
-                  className={[
-                    "channel-card",
-                    `channel-card-${channel.id}`,
-                    showChannelDetail && channel.id === "x"
-                      ? "is-expanded"
-                      : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  key={channel.id}
-                >
-                  <UrlIcon websiteUrl={channel.faviconUrl} />
-                  <div>
-                    <div className="channel-card-head">
-                      <h3>{channel.name}</h3>
-                      <span>
-                        {channelSetups.get(channel.id)?.status === "ready"
-                          ? "Ready"
-                          : channel.priority}
-                      </span>
-                    </div>
-                    <p>{channel.reason}</p>
-                  </div>
-                  {showChannelDetail && channel.id === "x" ? null : (
-                    <button
-                      className="secondary"
-                      type="button"
-                      onClick={() => void configureChannel(channel.id)}
-                      disabled={configuringChannelId === channel.id}
-                    >
-                      {configuringChannelId === channel.id
-                        ? "Setting up..."
-                        : channelSetups.get(channel.id)?.status === "ready"
-                          ? "Open"
-                          : "Configure"}
-                    </button>
-                  )}
-                  {showChannelDetail && channel.id === "x" ? (
-                    <div className="channel-card-expansion">
-                      <XChannelSetupPanel
-                        channel={activeChannel ?? channel}
-                        setup={activeChannelSetup}
-                        run={run?.kind === "x_account_analysis" ? run : null}
-                        isConfiguring={configuringChannelId === channel.id}
-                        isChecking={checkingChannelId === channel.id}
-                        isAnalyzing={analyzingChannelId === channel.id}
-                        chromeProfiles={chromeProfiles}
-                        selectedChromeProfileId={selectedChromeProfileId}
-                        isLoadingChromeProfiles={isLoadingChromeProfiles}
-                        onSelectChromeProfile={setSelectedChromeProfileId}
-                        onSelectForAnalysis={(profileId) =>
-                          void selectXProfileForAnalysis(profileId)
-                        }
-                        onOpenLogin={(profileId) => void openXLogin(profileId)}
-                        onOpenFile={(fileName) =>
-                          void openXChannelDoc(fileName)
-                        }
-                        embedded
-                      />
-                    </div>
-                  ) : null}
-                </article>
-              ))}
-          </div>
-
-          {channelError ? (
-            <p className="channel-error">{channelError}</p>
-          ) : null}
-
-          <div
-            className={
-              showChannelDetail
-                ? "channel-actions channel-actions-detail"
-                : "channel-actions"
-            }
-          >
-            {showChannelDetail ? (
-              <button
-                className="secondary"
-                type="button"
-                onClick={() => setActiveChannelId(null)}
-              >
-                Back
-              </button>
-            ) : (
-              <p>
-                {hasConfiguredChannel
-                  ? "At least one distribution channel is ready."
-                  : "Configure one channel to continue."}
-              </p>
-            )}
+        {openMenu === "brand" ? (
+          <nav className="dropdown dropdown-brand" aria-label="Brand menu">
+            <p className="dropdown-heading">Brand</p>
+            <div className="dropdown-item is-current">
+              <UrlIcon websiteUrl={project.config.websiteUrl} />
+              <span className="dropdown-item-copy">
+                <strong>{project.config.name}</strong>
+                <em>{host}</em>
+              </span>
+              <span className="dropdown-check" aria-hidden="true">
+                ✓
+              </span>
+            </div>
             <button
+              className="dropdown-item"
               type="button"
-              disabled={!hasConfiguredChannel}
-              onClick={() => setOnboardingStep("dashboard")}
+              onClick={() => {
+                setView({ kind: "brand" });
+                setOpenMenu(null);
+              }}
             >
-              Continue
+              <DocIcon />
+              <span className="dropdown-item-copy">
+                <strong>Brand analysis</strong>
+              </span>
             </button>
-          </div>
-        </section>
+            <p className="dropdown-heading">Channels</p>
+            {readyChannels.map((setup) => {
+              const option = channelOption(setup.id);
+              return (
+                <button
+                  className="dropdown-item"
+                  key={setup.id}
+                  type="button"
+                  onClick={() => {
+                    setView({ kind: "channel", channelId: setup.id });
+                    setOpenMenu(null);
+                  }}
+                >
+                  <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
+                  <span className="dropdown-item-copy">
+                    <strong>{setup.name}</strong>
+                  </span>
+                </button>
+              );
+            })}
+            <button
+              className="dropdown-item"
+              type="button"
+              onClick={() => {
+                setOpenMenu(null);
+                setView({ kind: "add-channels" });
+              }}
+            >
+              <span className="dropdown-plus" aria-hidden="true">
+                +
+              </span>
+              <span className="dropdown-item-copy">
+                <strong>Add channels</strong>
+              </span>
+            </button>
+            <div className="dropdown-divider" />
+            <button
+              className="dropdown-item"
+              type="button"
+              onClick={() => {
+                setOpenMenu(null);
+                onNewWebsite();
+              }}
+            >
+              <span className="dropdown-plus" aria-hidden="true">
+                +
+              </span>
+              <span className="dropdown-item-copy">
+                <strong>New website</strong>
+              </span>
+            </button>
+          </nav>
+        ) : null}
 
-        <section
-          className="dashboard-preview"
-          aria-hidden={!showDashboard}
-          aria-label="GTM dashboard"
-        >
-          <div className="channel-header">
-            <p className="eyebrow">Dashboard</p>
-            <h2>Daily GTM workspace</h2>
-            <p>
-              Your configured channels will turn into recurring research,
-              drafts, approvals, and browser-assisted posting runs.
-            </p>
-          </div>
+        {openMenu === "account" ? (
+          <nav className="dropdown dropdown-account" aria-label="Account menu">
+            <div className="dropdown-item is-current">
+              <AccountAvatar project={project} />
+              <span className="dropdown-item-copy">
+                <strong>{accountDisplayName(project)}</strong>
+                <em>
+                  {project.chromeProfile?.email ??
+                    `${project.agentProvider.title} · local`}
+                </em>
+              </span>
+            </div>
+            <div className="dropdown-divider" />
+            <button
+              className="dropdown-item"
+              type="button"
+              onClick={() => {
+                setOpenMenu(null);
+                void api.openExternalUrl(project.config.websiteUrl);
+              }}
+            >
+              <span className="dropdown-item-copy">
+                <strong>Open website</strong>
+              </span>
+            </button>
+            <button className="dropdown-item" type="button" disabled>
+              <span className="dropdown-item-copy">
+                <strong>Settings</strong>
+                <em>Coming soon</em>
+              </span>
+            </button>
+          </nav>
+        ) : null}
+      </header>
 
-          <div className="dashboard-status-list">
-            {project.channelSetups
-              .filter((setup) => setup.status === "ready")
-              .map((setup) => (
-                <article className="dashboard-status-card" key={setup.id}>
-                  <strong>{setup.name}</strong>
-                  <span>Ready for draft-first runs</span>
-                </article>
-              ))}
-          </div>
+      {error ? <div className="error home-error">{error}</div> : null}
+
+      <div className="home-body">
+        <aside className="home-sidebar" aria-label="Navigation">
+          <button
+            className={
+              view.kind === "inbox" ? "nav-item is-active" : "nav-item"
+            }
+            type="button"
+            onClick={() => setView({ kind: "inbox" })}
+          >
+            <span className="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" focusable="false">
+                <path d="M2 9.5 4.2 3.6h7.6L14 9.5v3H2z" />
+                <path d="M2 9.5h3.4c.3 1.2 1.3 2 2.6 2s2.3-.8 2.6-2H14" />
+              </svg>
+            </span>
+            Inbox
+          </button>
+          <button
+            className={
+              view.kind === "schedules" ? "nav-item is-active" : "nav-item"
+            }
+            type="button"
+            onClick={() => setView({ kind: "schedules" })}
+          >
+            <span className="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" focusable="false">
+                <circle cx="8" cy="8" r="6" />
+                <path d="M8 4.6V8l2.4 1.6" />
+              </svg>
+            </span>
+            Schedules
+          </button>
+        </aside>
+
+        <section className="home-main">
+          {view.kind === "inbox" ? (
+            <InboxView
+              onCreateSchedule={() => setView({ kind: "schedules" })}
+            />
+          ) : view.kind === "schedules" ? (
+            <SchedulesView
+              readyChannels={readyChannels}
+              schedules={project.schedules}
+              isComposerOpen={isComposerOpen}
+              onToggleComposer={setIsComposerOpen}
+              onChange={(next) => void saveSchedules(next)}
+            />
+          ) : view.kind === "brand" ? (
+            <BrandView project={project} onOpenDoc={setSelectedDoc} />
+          ) : view.kind === "add-channels" ? (
+            <AddChannelsView
+              project={project}
+              onError={onError}
+              onProjectUpdate={onProjectUpdate}
+              onDone={(channelId) =>
+                setView(
+                  channelId
+                    ? { kind: "channel", channelId }
+                    : { kind: "inbox" },
+                )
+              }
+            />
+          ) : (
+            <ChannelView
+              project={project}
+              channelId={view.channelId}
+              onOpenFile={(fileName) =>
+                void openChannelDoc(view.channelId, fileName)
+              }
+            />
+          )}
         </section>
       </div>
 
       {selectedDoc ? (
-        <div
-          className="doc-modal-backdrop"
-          onClick={() => setSelectedDoc(null)}
-        >
-          <article
-            className="doc-modal"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button
-              className="modal-close"
-              type="button"
-              aria-label="Close"
-              onClick={() => setSelectedDoc(null)}
+        <DocModal doc={selectedDoc} onClose={() => setSelectedDoc(null)} />
+      ) : null}
+    </main>
+  );
+}
+
+function AddChannelsView({
+  project,
+  onError,
+  onProjectUpdate,
+  onDone,
+}: {
+  project: ProjectState;
+  onError: (error: string | null) => void;
+  onProjectUpdate: (project: ProjectState) => void;
+  onDone: (channelId?: string) => void;
+}) {
+  const [workingId, setWorkingId] = React.useState<string | null>(null);
+
+  async function addChannel(option: ChannelOption) {
+    onError(null);
+    setWorkingId(option.id);
+    try {
+      const next = await api.setSelectedChannels(project.config.path, [
+        ...project.selectedChannels,
+        option.id,
+      ]);
+      onProjectUpdate(next);
+      const setup = next.channelSetups.find(
+        (candidate) => candidate.id === option.id,
+      );
+      if (
+        setup?.loginStatus === "verified" ||
+        setup?.accountStatus === "authenticated"
+      ) {
+        await runAnalysis(option.id);
+        return;
+      }
+      const verified = await api.verifyChannelLogin(
+        project.config.path,
+        option.id,
+        project.chromeProfileId,
+      );
+      onProjectUpdate(verified);
+      const refreshed = verified.channelSetups.find(
+        (candidate) => candidate.id === option.id,
+      );
+      if (
+        refreshed?.loginStatus === "verified" ||
+        refreshed?.accountStatus === "authenticated"
+      ) {
+        await runAnalysis(option.id);
+      } else {
+        await api.openChannelLogin(option.id);
+      }
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setWorkingId(null);
+    }
+  }
+
+  async function runAnalysis(channelId: string) {
+    onError(null);
+    setWorkingId(channelId);
+    try {
+      await api.runChannelAnalysis(project.config.path, [channelId]);
+      onProjectUpdate(await api.loadProject(project.config.path));
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setWorkingId(null);
+    }
+  }
+
+  return (
+    <div className="home-view">
+      <div className="home-view-head">
+        <div>
+          <h2>Add channels</h2>
+          <p>
+            Choose where {project.config.name} should show up. GTM Agent checks
+            each account in the selected Chrome profile.
+          </p>
+        </div>
+        <button type="button" onClick={() => onDone()}>
+          Done
+        </button>
+      </div>
+
+      <div className="channel-grid">
+        {CHANNEL_OPTIONS.map((option) => {
+          const setup = project.channelSetups.find(
+            (candidate) => candidate.id === option.id,
+          );
+          const isReady = setup?.analysisStatus === "ready";
+          const isSelected = project.selectedChannels.includes(option.id);
+          const isWorking = workingId === option.id;
+          const statusText = isReady
+            ? "Added"
+            : setup?.accountStatus === "authenticated"
+              ? "Account detected"
+              : isSelected
+                ? "Selected"
+                : "Not connected";
+
+          return (
+            <article
+              className={`channel-card ${isSelected ? "is-selected" : ""}`}
+              key={option.id}
             >
-              ×
+              <div className="channel-card-head">
+                <UrlIcon websiteUrl={option.faviconUrl} />
+                <div>
+                  <strong className="channel-card-title">{option.name}</strong>
+                  <span
+                    className={
+                      isReady ? "channel-status is-success" : "channel-status"
+                    }
+                  >
+                    {isReady ? "● " : "○ "}
+                    {statusText}
+                  </span>
+                </div>
+              </div>
+              <p className="channel-card-body">{option.description}</p>
+              {isReady ? (
+                <button
+                  className="secondary channel-inline-action"
+                  type="button"
+                  disabled={isWorking}
+                  onClick={() => onDone(option.id)}
+                >
+                  View
+                </button>
+              ) : (
+                <button
+                  className="channel-inline-action"
+                  type="button"
+                  disabled={isWorking}
+                  onClick={() => void addChannel(option)}
+                >
+                  {isWorking ? "Checking…" : isSelected ? "Analyze" : "Add"}
+                </button>
+              )}
+            </article>
+          );
+        })}
+      </div>
+
+      <button
+        className="secondary add-channels-done"
+        type="button"
+        onClick={() => onDone()}
+      >
+        Back to workspace
+      </button>
+    </div>
+  );
+}
+
+function InboxView({ onCreateSchedule }: { onCreateSchedule: () => void }) {
+  return (
+    <div className="home-view">
+      <div className="home-view-head">
+        <div>
+          <h2>Inbox</h2>
+          <p>Drafts from scheduled runs land here for your review.</p>
+        </div>
+      </div>
+      <div className="inbox-empty">
+        <span className="inbox-empty-icon" aria-hidden="true">
+          <svg viewBox="0 0 16 16" focusable="false">
+            <path d="M2 9.5 4.2 3.6h7.6L14 9.5v3H2z" />
+            <path d="M2 9.5h3.4c.3 1.2 1.3 2 2.6 2s2.3-.8 2.6-2H14" />
+          </svg>
+        </span>
+        <strong>Your inbox is empty</strong>
+        <p>
+          When a schedule runs, the agent researches opportunities and drops
+          draft replies here. Nothing is posted without your approval.
+        </p>
+        <button className="secondary" type="button" onClick={onCreateSchedule}>
+          Create a schedule
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function recommendedSchedules(setup: ChannelSetup): ScheduleConfig[] {
+  const recommendation = setup.schedule;
+  if (!recommendation) return [];
+  const time = recommendation.bestTime ?? "09:00";
+  const result: ScheduleConfig[] = [];
+  if (recommendation.repliesPerDay && recommendation.repliesPerDay > 0) {
+    result.push({
+      id: `rec_${setup.id}_replies`,
+      channelId: setup.id,
+      kind: "replies",
+      cadence: "Daily",
+      time,
+      quantity: recommendation.repliesPerDay,
+      enabled: true,
+    });
+  }
+  if (recommendation.postsPerWeek && recommendation.postsPerWeek > 0) {
+    result.push({
+      id: `rec_${setup.id}_posts`,
+      channelId: setup.id,
+      kind: "posts",
+      cadence: "Weekly",
+      time,
+      quantity: recommendation.postsPerWeek,
+      enabled: true,
+    });
+  }
+  return result;
+}
+
+function scheduleLabel(schedule: ScheduleConfig, channelName: string) {
+  const unit = schedule.kind === "replies" ? "draft replies" : "draft posts";
+  return `${schedule.quantity} ${unit} · ${channelName}`;
+}
+
+function SchedulesView({
+  readyChannels,
+  schedules,
+  isComposerOpen,
+  onToggleComposer,
+  onChange,
+}: {
+  readyChannels: ChannelSetup[];
+  schedules: ScheduleConfig[];
+  isComposerOpen: boolean;
+  onToggleComposer: (open: boolean) => void;
+  onChange: (schedules: ScheduleConfig[]) => void;
+}) {
+  const [draftChannelId, setDraftChannelId] = React.useState(
+    readyChannels[0]?.id ?? "x",
+  );
+  const [draftKind, setDraftKind] = React.useState<"replies" | "posts">(
+    "replies",
+  );
+  const [draftQuantity, setDraftQuantity] = React.useState(5);
+  const [draftCadence, setDraftCadence] = React.useState("Daily");
+  const [draftTime, setDraftTime] = React.useState("09:00");
+
+  const pendingRecommendations = readyChannels
+    .flatMap(recommendedSchedules)
+    .filter(
+      (recommendation) =>
+        !schedules.some(
+          (schedule) =>
+            schedule.channelId === recommendation.channelId &&
+            schedule.kind === recommendation.kind,
+        ),
+    );
+
+  function addSchedule() {
+    onChange([
+      ...schedules,
+      {
+        id: `schedule_${Date.now()}`,
+        channelId: draftChannelId,
+        kind: draftKind,
+        cadence: draftCadence,
+        time: draftTime,
+        quantity: draftQuantity,
+        enabled: true,
+      },
+    ]);
+    onToggleComposer(false);
+  }
+
+  return (
+    <div className="home-view">
+      <div className="home-view-head">
+        <div>
+          <h2>Schedules</h2>
+          <p>Recurring draft-first runs. Each run fills your inbox.</p>
+        </div>
+        <button type="button" onClick={() => onToggleComposer(!isComposerOpen)}>
+          New schedule
+        </button>
+      </div>
+
+      {isComposerOpen ? (
+        <div className="schedule-composer">
+          <div className="schedule-composer-row">
+            <div className="composer-field">
+              <span className="composer-label">Channel</span>
+              <div className="composer-chip-row">
+                {(readyChannels.length
+                  ? readyChannels
+                  : CHANNEL_OPTIONS.map((option) => ({
+                      id: option.id,
+                      name: option.name,
+                    }))
+                ).map((channel) => (
+                  <button
+                    className={
+                      draftChannelId === channel.id
+                        ? "composer-chip is-selected"
+                        : "composer-chip"
+                    }
+                    key={channel.id}
+                    type="button"
+                    onClick={() => setDraftChannelId(channel.id)}
+                  >
+                    {channel.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="composer-field">
+              <span className="composer-label">Type</span>
+              <div className="composer-chip-row">
+                {(["replies", "posts"] as const).map((kind) => (
+                  <button
+                    className={
+                      draftKind === kind
+                        ? "composer-chip is-selected"
+                        : "composer-chip"
+                    }
+                    key={kind}
+                    type="button"
+                    onClick={() => setDraftKind(kind)}
+                  >
+                    {kind === "replies" ? "Replies" : "Posts"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="composer-field">
+              <span className="composer-label">Per run</span>
+              <input
+                className="composer-time composer-quantity"
+                type="number"
+                min={1}
+                max={50}
+                value={draftQuantity}
+                onChange={(event) =>
+                  setDraftQuantity(Number(event.target.value) || 1)
+                }
+              />
+            </div>
+            <div className="composer-field">
+              <span className="composer-label">Cadence</span>
+              <div className="composer-chip-row">
+                {(["Daily", "Weekdays", "Weekly"] as const).map((cadence) => (
+                  <button
+                    className={
+                      draftCadence === cadence
+                        ? "composer-chip is-selected"
+                        : "composer-chip"
+                    }
+                    key={cadence}
+                    type="button"
+                    onClick={() => setDraftCadence(cadence)}
+                  >
+                    {cadence}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="composer-field">
+              <span className="composer-label">Time</span>
+              <input
+                className="composer-time"
+                type="time"
+                value={draftTime}
+                onChange={(event) => setDraftTime(event.target.value)}
+              />
+            </div>
+          </div>
+          <div className="schedule-composer-actions">
+            <p>Runs create drafts in your inbox. Nothing posts on its own.</p>
+            <button type="button" onClick={addSchedule}>
+              Add schedule
             </button>
-            <p className="label">{selectedDoc.fileName}</p>
-            <h2>{selectedDoc.title}</h2>
-            <RenderedDoc content={selectedDoc.content} full />
-          </article>
+          </div>
         </div>
       ) : null}
-    </section>
+
+      {pendingRecommendations.length ? (
+        <>
+          <p className="eyebrow">Recommended for your brand</p>
+          <div className="schedule-list">
+            {pendingRecommendations.map((recommendation) => {
+              const option = channelOption(recommendation.channelId);
+              const setup = readyChannels.find(
+                (candidate) => candidate.id === recommendation.channelId,
+              );
+              return (
+                <div
+                  className="schedule-row schedule-row-recommended"
+                  key={recommendation.id}
+                >
+                  <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
+                  <span className="schedule-copy">
+                    <strong>
+                      {scheduleLabel(
+                        recommendation,
+                        option?.name ?? recommendation.channelId,
+                      )}
+                    </strong>
+                    <em>
+                      {recommendation.cadence} at {recommendation.time}
+                      {setup?.schedule?.notes
+                        ? ` · ${setup.schedule.notes}`
+                        : " · from your channel analysis"}
+                    </em>
+                  </span>
+                  <button
+                    className="secondary channel-inline-action"
+                    type="button"
+                    onClick={() =>
+                      onChange([
+                        ...schedules,
+                        {
+                          ...recommendation,
+                          id: `schedule_${Date.now()}_${recommendation.kind}`,
+                        },
+                      ])
+                    }
+                  >
+                    Add
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
+
+      {schedules.length ? (
+        <div className="schedule-list">
+          {schedules.map((schedule) => {
+            const option = channelOption(schedule.channelId);
+            return (
+              <div className="schedule-row" key={schedule.id}>
+                <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
+                <span className="schedule-copy">
+                  <strong>
+                    {scheduleLabel(
+                      schedule,
+                      option?.name ?? schedule.channelId,
+                    )}
+                  </strong>
+                  <em>
+                    {schedule.cadence} at {schedule.time} · draft-first
+                  </em>
+                </span>
+                <button
+                  className={schedule.enabled ? "switch is-on" : "switch"}
+                  type="button"
+                  role="switch"
+                  aria-checked={schedule.enabled}
+                  onClick={() =>
+                    onChange(
+                      schedules.map((candidate) =>
+                        candidate.id === schedule.id
+                          ? { ...candidate, enabled: !candidate.enabled }
+                          : candidate,
+                      ),
+                    )
+                  }
+                >
+                  <span className="switch-knob" />
+                </button>
+                <button
+                  className="schedule-remove"
+                  type="button"
+                  aria-label="Remove schedule"
+                  onClick={() =>
+                    onChange(
+                      schedules.filter(
+                        (candidate) => candidate.id !== schedule.id,
+                      ),
+                    )
+                  }
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="empty-note">
+          No schedules yet. Create one to start recurring draft runs.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function BrandView({
+  project,
+  onOpenDoc,
+}: {
+  project: ProjectState;
+  onOpenDoc: (doc: ContextDoc) => void;
+}) {
+  const host = displayHost(project.config.websiteUrl);
+  const productDescription = extractProductDescription(project.docs);
+  const competitors = extractCompetitors(project.docs, host);
+
+  return (
+    <div className="home-view">
+      <div className="home-view-head">
+        <div>
+          <h2>Brand analysis</h2>
+          <p>{productDescription}</p>
+        </div>
+      </div>
+
+      <p className="eyebrow">Source documents</p>
+      <div className="document-list">
+        {project.docs.map((doc) => (
+          <button
+            className="document-row"
+            key={doc.key}
+            type="button"
+            onClick={() => onOpenDoc(doc)}
+          >
+            <DocIcon />
+            <span>{doc.title}</span>
+            <span className="document-chevron" aria-hidden="true">
+              ›
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <p className="eyebrow">Competitors</p>
+      {competitors.length ? (
+        <div className="competitor-list">
+          {competitors.map((competitor) => (
+            <button
+              className="competitor-row"
+              key={competitor.url}
+              type="button"
+              onClick={() => void api.openExternalUrl(competitor.url)}
+            >
+              <UrlIcon websiteUrl={competitor.url} />
+              <span>{competitor.host}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="empty-note">
+          Verified competitor links will appear here after analysis.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ChannelView({
+  project,
+  channelId,
+  onOpenFile,
+}: {
+  project: ProjectState;
+  channelId: string;
+  onOpenFile: (fileName: string) => void;
+}) {
+  const setup = project.channelSetups.find(
+    (candidate) => candidate.id === channelId,
+  );
+  const option = channelOption(channelId);
+  if (!setup) return null;
+
+  return (
+    <div className="home-view">
+      <div className="home-view-head">
+        <div>
+          <div className="channel-view-title">
+            <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
+            <h2>{setup.name}</h2>
+            {setup.analysisStatus === "ready" ? (
+              <span className="channel-analysis-chip is-ready">Ready</span>
+            ) : null}
+          </div>
+          <p>
+            Channel memory for draft-first outreach
+            {setup.accountLabel ? ` · ${setup.accountLabel}` : ""}.
+          </p>
+        </div>
+      </div>
+
+      <p className="eyebrow">Channel memory</p>
+      <div className="document-list">
+        {CHANNEL_DOCS.map((doc) => (
+          <button
+            className="document-row"
+            key={doc.fileName}
+            type="button"
+            onClick={() => onOpenFile(doc.fileName)}
+            disabled={!setup.files.includes(doc.fileName)}
+          >
+            <DocIcon />
+            <span>{doc.title}</span>
+            <span className="document-chevron" aria-hidden="true">
+              ›
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DocModal({ doc, onClose }: { doc: ContextDoc; onClose: () => void }) {
+  return (
+    <div className="doc-modal-backdrop" onClick={onClose}>
+      <article
+        className="doc-modal"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          className="modal-close"
+          type="button"
+          aria-label="Close"
+          onClick={onClose}
+        >
+          ×
+        </button>
+        <p className="label">{doc.fileName}</p>
+        <h2>{doc.title}</h2>
+        <RenderedDoc content={doc.content} full />
+      </article>
+    </div>
   );
 }
 
@@ -840,130 +2175,7 @@ type AnalysisStep = {
   status: AnalysisStepStatus;
 };
 
-function AnalysisProgressCard({
-  agentOutput,
-  channels,
-  competitors,
-  docs,
-  isComplete,
-  isRunning,
-  productDescription,
-  runError,
-  onContinue,
-}: {
-  agentOutput: RunActivity[];
-  channels: MarketingChannel[];
-  competitors: Competitor[];
-  docs: ContextDoc[];
-  isComplete: boolean;
-  isRunning: boolean;
-  productDescription: string;
-  runError: string | null;
-  onContinue: () => void;
-}) {
-  const [isLogOpen, setIsLogOpen] = React.useState(false);
-  const logRef = React.useRef<HTMLDivElement | null>(null);
-  const steps = analysisSteps(docs, competitors, isRunning, isComplete);
-  const activeStep = steps.find((step) => step.status === "active");
-  const readyDocCount = docs.filter(hasDocumentContent).length;
-  const resultStats = [
-    { label: "Documents", value: `${readyDocCount}/${docs.length}` },
-    { label: "Competitors", value: String(competitors.length) },
-    { label: "Channels", value: String(channels.length) },
-  ];
-
-  React.useEffect(() => {
-    if (!isLogOpen || !logRef.current) return;
-    logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [isLogOpen, agentOutput.length, agentOutput.at(-1)?.message]);
-
-  return (
-    <section className="panel activity-card">
-      <div className="activity-head">
-        <div>
-          <p className="eyebrow">Brand workspace</p>
-          <h2>{isComplete ? "Brand analysis ready" : "Analyzing brand"}</h2>
-        </div>
-        <button
-          className="secondary agent-log-toggle"
-          type="button"
-          onClick={() => setIsLogOpen((open) => !open)}
-        >
-          {isLogOpen ? "Hide agent log" : "Show agent log"}
-        </button>
-      </div>
-
-      <div className="analysis-card-body">
-        <div className="analysis-summary">
-          <p>
-            {isComplete
-              ? "The source documents are ready. Review the brand context, then continue into channel setup."
-              : (activeStep?.detail ??
-                "GTM Agent is preparing the source documents from the selected ACP agent.")}
-          </p>
-        </div>
-
-        <div className="analysis-step-list" aria-label="Analysis progress">
-          {steps.map((step) => (
-            <div className={`analysis-step is-${step.status}`} key={step.title}>
-              <span className="analysis-step-icon" aria-hidden="true" />
-              <div>
-                <strong>{step.title}</strong>
-                <p>{step.statusLabel}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {isComplete && !runError ? (
-          <div className="analysis-result" aria-label="Analysis result">
-            <p>{productDescription}</p>
-            <div className="analysis-result-grid">
-              {resultStats.map((stat) => (
-                <div key={stat.label}>
-                  <strong>{stat.value}</strong>
-                  <span>{stat.label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {isLogOpen ? (
-          <div className="agent-log-panel">
-            <div className="activity-list agent-log-list" ref={logRef}>
-              {agentOutput.length ? (
-                agentOutput.map((item, index) => (
-                  <article
-                    className={`activity-item ${activityClass(item.kind)}`}
-                    key={`${item.title}-${index}`}
-                  >
-                    <p>{item.message}</p>
-                  </article>
-                ))
-              ) : (
-                <article className="activity-item">
-                  <p>No visible agent messages yet.</p>
-                </article>
-              )}
-            </div>
-          </div>
-        ) : null}
-      </div>
-
-      {runError ? <p className="run-error">{runError}</p> : null}
-      {isComplete && !runError ? (
-        <div className="activity-actions">
-          <button type="button" onClick={onContinue}>
-            Continue
-          </button>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function analysisSteps(
+function brandAnalysisSteps(
   docs: ContextDoc[],
   competitors: Competitor[],
   isRunning: boolean,
@@ -1037,397 +2249,6 @@ function analysisSteps(
   });
 }
 
-function XChannelSetupPanel({
-  channel,
-  setup,
-  run,
-  isConfiguring,
-  isChecking,
-  isAnalyzing,
-  chromeProfiles,
-  selectedChromeProfileId,
-  isLoadingChromeProfiles,
-  onSelectChromeProfile,
-  onSelectForAnalysis,
-  onOpenLogin,
-  onOpenFile,
-  embedded = false,
-}: {
-  channel: MarketingChannel;
-  setup: ChannelSetup | null;
-  run: RunState | null;
-  isConfiguring: boolean;
-  isChecking: boolean;
-  isAnalyzing: boolean;
-  chromeProfiles: ChromeProfile[];
-  selectedChromeProfileId: string | null;
-  isLoadingChromeProfiles: boolean;
-  onSelectChromeProfile: (profileId: string) => void;
-  onSelectForAnalysis: (profileId?: string | null) => void;
-  onOpenLogin: (profileId?: string | null) => void;
-  onOpenFile: (fileName: string) => void;
-  embedded?: boolean;
-}) {
-  const [isProfilePickerOpen, setIsProfilePickerOpen] = React.useState(false);
-  const [hasSelectedProfileForRun, setHasSelectedProfileForRun] =
-    React.useState(false);
-  const isReady = setup?.status === "ready";
-  const isVerified = setup?.accountStatus === "authenticated";
-  const hasVerifiedSelectedProfile =
-    isVerified && setup?.chromeProfileId === selectedChromeProfileId;
-  const needsLogin = setup?.accountStatus === "needs_login";
-  const isUnknown = setup?.accountStatus === "unknown";
-  const hasConfirmedSelectedProfile =
-    hasSelectedProfileForRun || Boolean(run?.status === "running");
-  const isRunActive =
-    hasVerifiedSelectedProfile &&
-    (isAnalyzing ||
-      run?.status === "running" ||
-      setup?.analysisStatus === "running");
-  const isLoginActionBusy = isChecking || isRunActive || isConfiguring;
-  const selectedChromeProfile = chromeProfiles.find(
-    (profile) => profile.id === selectedChromeProfileId,
-  );
-  const selectedProfileHasXSession = Boolean(
-    selectedChromeProfile?.hasXSession,
-  );
-  const loginLabel = hasVerifiedSelectedProfile
-    ? "X account detected"
-    : needsLogin || (selectedChromeProfile && !selectedProfileHasXSession)
-      ? "No X account detected"
-      : isUnknown
-        ? "GTM Agent could not verify this Chrome profile. Check again or choose another profile."
-        : selectedChromeProfile
-          ? selectedProfileHasXSession
-            ? "X account detected"
-            : "No X account detected"
-          : "Choose the Chrome profile GTM Agent should check.";
-  const actionLabel = isChecking
-    ? "Checking..."
-    : isRunActive
-      ? "Analyzing..."
-      : needsLogin || (selectedChromeProfile && !selectedProfileHasXSession)
-        ? "Sign in to X"
-        : hasVerifiedSelectedProfile && !hasSelectedProfileForRun
-          ? "Select"
-          : hasVerifiedSelectedProfile
-            ? isReady
-              ? "Ready"
-              : "Check again"
-            : "Select";
-  const shouldShowAnalysisOutput =
-    hasVerifiedSelectedProfile &&
-    (hasSelectedProfileForRun || isRunActive || isReady);
-  const analysisSteps = xAnalysisSteps(isRunActive, isReady);
-  function useChromeProfile(profileId: string) {
-    onSelectChromeProfile(profileId);
-    setHasSelectedProfileForRun(false);
-    setIsProfilePickerOpen(false);
-  }
-  return (
-    <div
-      className={
-        embedded ? "x-setup-panel x-setup-panel-embedded" : "x-setup-panel"
-      }
-      aria-label="X channel setup"
-    >
-      {embedded ? null : (
-        <div className="x-setup-head">
-          <UrlIcon websiteUrl={channel.faviconUrl} />
-          <div>
-            <p className="eyebrow">X setup</p>
-            <h3>Draft-first outreach through Chrome</h3>
-          </div>
-          <span>
-            {isReady ? "Ready" : isConfiguring ? "Creating" : "Not set up"}
-          </span>
-        </div>
-      )}
-
-      {!shouldShowAnalysisOutput ? (
-        <div className="x-login-card">
-          <div className="x-login-copy">
-            <strong>Selected Chrome profile</strong>
-            {selectedChromeProfile ? (
-              <div className="x-selected-profile">
-                <ChromeProfileAvatar profile={selectedChromeProfile} />
-                <div>
-                  <span>{selectedChromeProfile.name}</span>
-                  <p>{profileSubtitle(selectedChromeProfile)}</p>
-                </div>
-              </div>
-            ) : (
-              <p>
-                {isLoadingChromeProfiles
-                  ? "Loading Chrome profiles..."
-                  : "No Chrome profile selected yet."}
-              </p>
-            )}
-            <p
-              className={[
-                "x-account-status",
-                selectedChromeProfile && selectedProfileHasXSession
-                  ? "is-detected"
-                  : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-            >
-              {loginLabel}
-            </p>
-          </div>
-          <div className="x-login-actions">
-            <button
-              className="secondary"
-              type="button"
-              onClick={() => setIsProfilePickerOpen(true)}
-              disabled={isLoginActionBusy || isLoadingChromeProfiles}
-            >
-              Choose profile
-            </button>
-            {!selectedChromeProfile ? null : needsLogin ||
-              !selectedProfileHasXSession ? (
-              <button
-                className="secondary"
-                type="button"
-                onClick={() => onOpenLogin(selectedChromeProfileId)}
-                disabled={isLoginActionBusy}
-              >
-                Sign in to X
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setHasSelectedProfileForRun(true);
-                  onSelectForAnalysis(selectedChromeProfileId);
-                }}
-                disabled={isLoginActionBusy}
-              >
-                {actionLabel}
-              </button>
-            )}
-          </div>
-        </div>
-      ) : null}
-
-      {isProfilePickerOpen
-        ? createPortal(
-            <div
-              className="profile-picker-backdrop"
-              onClick={() => setIsProfilePickerOpen(false)}
-            >
-              <article
-                className="profile-picker-modal"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <div className="profile-picker-head">
-                  <div>
-                    <p className="eyebrow">Chrome profile</p>
-                    <h3>Choose the profile GTM Agent should use</h3>
-                  </div>
-                  <button
-                    className="modal-close"
-                    type="button"
-                    aria-label="Close"
-                    onClick={() => setIsProfilePickerOpen(false)}
-                  >
-                    ×
-                  </button>
-                </div>
-                <div className="profile-picker-list">
-                  {chromeProfiles.map((profile) => (
-                    <button
-                      className={[
-                        "profile-picker-row",
-                        profile.id === selectedChromeProfileId
-                          ? "is-selected"
-                          : "",
-                      ]
-                        .filter(Boolean)
-                        .join(" ")}
-                      key={profile.id}
-                      type="button"
-                      onClick={() => useChromeProfile(profile.id)}
-                    >
-                      <ChromeProfileAvatar profile={profile} />
-                      <div className="profile-picker-main">
-                        <div className="profile-picker-title">
-                          <strong>{profile.name}</strong>
-                        </div>
-                        <span className="profile-picker-email">
-                          {profileSubtitle(profile)}
-                        </span>
-                      </div>
-                      <em className="profile-picker-action">
-                        {profile.id === selectedChromeProfileId
-                          ? "Selected"
-                          : "Choose"}
-                      </em>
-                    </button>
-                  ))}
-                </div>
-                <p className="profile-picker-note">
-                  Pick the Chrome profile first. GTM Agent only checks X and
-                  starts analysis after you confirm with Select.
-                </p>
-              </article>
-            </div>,
-            document.body,
-          )
-        : null}
-
-      {shouldShowAnalysisOutput ? (
-        <div className="x-analysis-grid">
-          <div className="x-analysis-files">
-            <p className="eyebrow">Writing</p>
-            {X_CHANNEL_DOCS.map((doc) => (
-              <button
-                className="x-analysis-file-row"
-                key={doc.fileName}
-                type="button"
-                onClick={() => onOpenFile(doc.fileName)}
-              >
-                <span className="document-icon" aria-hidden="true">
-                  <svg viewBox="0 0 16 16" focusable="false">
-                    <path d="M4 1.75h5.2L12.75 5.3v8.95H4z" />
-                    <path d="M9 1.9v3.6h3.55M6 8h4M6 10.5h4" />
-                  </svg>
-                </span>
-                <span>{doc.title}</span>
-                <span className="document-chevron" aria-hidden="true">
-                  ›
-                </span>
-              </button>
-            ))}
-          </div>
-          <div className="x-progress-card">
-            <div className="x-progress-summary">
-              <p className="eyebrow">Account analysis</p>
-              <h3>{isReady ? "X channel ready" : "Preparing X channel"}</h3>
-              <p>
-                {isReady
-                  ? "The channel memory is ready for draft-first outreach."
-                  : "GTM Agent is preparing channel memory from the selected Chrome profile and the brand context."}
-              </p>
-            </div>
-            <div className="analysis-step-list x-progress-steps">
-              {analysisSteps.map((step) => (
-                <div
-                  className={`analysis-step is-${step.status}`}
-                  key={step.title}
-                >
-                  <span className="analysis-step-icon" aria-hidden="true" />
-                  <div>
-                    <strong>{step.title}</strong>
-                    <p>{step.statusLabel}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="x-progress-footer">
-              {isRunActive ? (
-                <div className="analyzing-shimmer">Analyzing...</div>
-              ) : null}
-              {run?.status === "failed" && run.error ? (
-                <p className="run-error">{run.error}</p>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {embedded ? null : (
-        <div className="x-setup-steps">
-          <SetupStep
-            title="Learn account voice"
-            description="Profile, recent posts, replies, strong examples, and avoid patterns become channel memory."
-            status={
-              setup?.analysisStatus === "running"
-                ? "Running"
-                : isReady
-                  ? "Ready"
-                  : "Next"
-            }
-          />
-          <SetupStep
-            title="Create daily draft queue"
-            description="Codex stores each source post link with a matching reply draft, risk notes, and review status."
-            status={isReady ? "Ready" : "Planned"}
-          />
-          <SetupStep
-            title="Prepare reply in Chrome"
-            description="Approved drafts can later open the source post and paste the reply so the user only has to review and send."
-            status={isReady ? "Next" : "Planned"}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-const X_CHANNEL_DOCS = [
-  { fileName: "profile.md", title: "Profile" },
-  { fileName: "voice.md", title: "Voice" },
-  { fileName: "rules.md", title: "Rules" },
-  { fileName: "examples.md", title: "Examples" },
-];
-
-function xAnalysisSteps(isRunning: boolean, isReady: boolean): AnalysisStep[] {
-  const steps = [
-    {
-      title: "Account context",
-      pendingLabel: "Waiting",
-      activeLabel: "Reading selected Chrome profile",
-      doneLabel: "Account context prepared",
-    },
-    {
-      title: "Channel voice",
-      pendingLabel: "Waiting",
-      activeLabel: "Adapting brand voice for X",
-      doneLabel: "Voice rules ready",
-    },
-    {
-      title: "Examples",
-      pendingLabel: "Waiting",
-      activeLabel: "Preparing useful examples",
-      doneLabel: "Examples ready",
-    },
-    {
-      title: "Rules",
-      pendingLabel: "Waiting",
-      activeLabel: "Finalizing approval rules",
-      doneLabel: "Channel rules ready",
-    },
-  ];
-  if (isReady) {
-    return steps.map((step) => ({
-      ...step,
-      detail: step.doneLabel,
-      status: "done",
-      statusLabel: step.doneLabel,
-    }));
-  }
-  let activeAssigned = false;
-  return steps.map((step) => {
-    if (isRunning && !activeAssigned) {
-      activeAssigned = true;
-      return {
-        ...step,
-        detail: step.activeLabel,
-        status: "active",
-        statusLabel: step.activeLabel,
-      };
-    }
-    return {
-      ...step,
-      detail: step.pendingLabel,
-      status: "pending",
-      statusLabel: step.pendingLabel,
-    };
-  });
-}
-
 function ChromeProfileAvatar({ profile }: { profile: ChromeProfile }) {
   if (profile.avatarDataUrl) {
     return (
@@ -1483,26 +2304,6 @@ function chromeProfileColor(profile: ChromeProfile) {
   return palette[seed % palette.length];
 }
 
-function SetupStep({
-  title,
-  description,
-  status,
-}: {
-  title: string;
-  description: string;
-  status: string;
-}) {
-  return (
-    <div className="x-setup-step">
-      <div>
-        <strong>{title}</strong>
-        <p>{description}</p>
-      </div>
-      <span>{status}</span>
-    </div>
-  );
-}
-
 function RenderedDoc({
   content,
   full = false,
@@ -1553,56 +2354,6 @@ type Competitor = {
   url: string;
 };
 
-type MarketingChannel = {
-  id: string;
-  name: string;
-  faviconUrl: string;
-  priority: "Recommended" | "Optional" | "Not now";
-  reason: string;
-};
-
-function channelName(channelId: string) {
-  return (
-    SUPPORTED_CHANNELS.find((channel) => channel.id === channelId)?.name ??
-    channelId
-  );
-}
-
-const SUPPORTED_CHANNELS: MarketingChannel[] = [
-  {
-    id: "x",
-    name: "X",
-    faviconUrl: "https://x.com",
-    priority: "Optional",
-    reason:
-      "Use founder-led posts and product narratives when the audience follows builders.",
-  },
-  {
-    id: "reddit",
-    name: "Reddit",
-    faviconUrl: "https://reddit.com",
-    priority: "Optional",
-    reason:
-      "Use community research and draft replies when niche problem discussions are active.",
-  },
-  {
-    id: "hacker-news",
-    name: "Hacker News",
-    faviconUrl: "https://news.ycombinator.com",
-    priority: "Optional",
-    reason:
-      "Use launches and technical discussion when the product has a founder or developer angle.",
-  },
-  {
-    id: "seo",
-    name: "SEO",
-    faviconUrl: "https://search.google.com/search-console",
-    priority: "Optional",
-    reason:
-      "Use search demand and website content when organic intent is visible.",
-  },
-];
-
 function docByKey(docs: ContextDoc[], key: string) {
   const fileKey = key.replaceAll("_", "-");
   return docs.find((doc) => doc.key === key || doc.fileName.includes(fileKey));
@@ -1614,13 +2365,16 @@ function shouldRunInitialAnalysis(project: ProjectState) {
   return project.docs.some((doc) => !hasDocumentContent(doc));
 }
 
+function isBrandAnalysisComplete(project: ProjectState) {
+  return project.docs.length > 0 && project.docs.every(hasDocumentContent);
+}
+
 function hasDocumentContent(doc: ContextDoc) {
   return doc.content.trim() !== `# ${doc.title}`;
 }
 
-function activityClass(kind: string) {
-  if (kind === "message" || kind === "tool" || kind === "idle") return kind;
-  return "other";
+function compactVersion(version: string) {
+  return version.split("\n")[0]?.slice(0, 40) ?? version;
 }
 
 function agentOutputActivity(activity: RunActivity[]) {
@@ -1719,115 +2473,6 @@ function extractCompetitors(docs: ContextDoc[], ownHost: string) {
   }
 
   return Array.from(competitors.values()).slice(0, 6);
-}
-
-function extractMarketingChannels(docs: ContextDoc[]) {
-  const doc = docByKey(docs, "marketing_strategy");
-  if (!doc || !hasDocumentContent(doc)) return SUPPORTED_CHANNELS;
-
-  const content = doc.content.toLowerCase();
-  const detected = SUPPORTED_CHANNELS.map((channel) => {
-    const score = channelKeywordScore(channel.id, content);
-    const priority = extractChannelPriority(channel, doc.content);
-    return {
-      ...channel,
-      priority:
-        priority ?? (score > 0 ? ("Recommended" as const) : channel.priority),
-      reason: score > 0 ? recommendedChannelReason(channel.id) : channel.reason,
-      score,
-    };
-  })
-    .filter((channel) => channel.score > 0 && channel.priority !== "Not now")
-    .sort((a, b) => channelDisplayRank(a.id) - channelDisplayRank(b.id));
-
-  return detected.length
-    ? detected.map(({ score: _, ...channel }) => channel)
-    : SUPPORTED_CHANNELS;
-}
-
-function channelDisplayRank(channelId: string) {
-  const ranks: Record<string, number> = {
-    x: 10,
-    reddit: 20,
-    "hacker-news": 30,
-    seo: 40,
-  };
-  return ranks[channelId] ?? 100;
-}
-
-function extractChannelPriority(channel: MarketingChannel, content: string) {
-  const headingNames: Record<string, string[]> = {
-    seo: ["seo"],
-    x: ["x", "twitter"],
-    reddit: ["reddit"],
-    "hacker-news": ["hacker news", "hn"],
-  };
-  const names = headingNames[channel.id] ?? [channel.name.toLowerCase()];
-  const lines = content.split(/\r?\n/);
-  const headingIndex = lines.findIndex((line) => {
-    const normalized = cleanInline(line)
-      .replace(/^#+\s*/, "")
-      .trim()
-      .toLowerCase();
-    return names.some(
-      (name) => normalized === name || normalized.startsWith(`${name} `),
-    );
-  });
-  if (headingIndex === -1) return null;
-
-  const section = lines
-    .slice(headingIndex + 1, headingIndex + 8)
-    .join("\n")
-    .toLowerCase();
-  if (section.includes("priority: not now")) return "Not now" as const;
-  if (section.includes("priority: optional")) return "Optional" as const;
-  if (section.includes("priority: recommended")) return "Recommended" as const;
-  return null;
-}
-
-function channelKeywordScore(channelId: string, content: string) {
-  const patterns: Record<string, RegExp[]> = {
-    seo: [
-      /\bseo\b/g,
-      /\bsearch\b/g,
-      /\borganic\b/g,
-      /\bkeyword\b/g,
-      /\bcontent\b/g,
-      /\bgoogle\b/g,
-    ],
-    x: [
-      /(^|\s)x(\s|$|[.,;:])/g,
-      /\btwitter\b/g,
-      /\bfounder-led\b/g,
-      /\bfounder led\b/g,
-      /\bbuild in public\b/g,
-    ],
-    reddit: [/\breddit\b/g, /\bsubreddit\b/g, /\bcommunity\b/g],
-    "hacker-news": [
-      /\bhacker news\b/g,
-      /(^|\s)hn(\s|$|[.,;:])/g,
-      /\by combinator\b/g,
-      /\btechnical audience\b/g,
-    ],
-  };
-  return (patterns[channelId] ?? []).reduce(
-    (score, pattern) => score + (content.match(pattern)?.length ?? 0),
-    0,
-  );
-}
-
-function recommendedChannelReason(channelId: string) {
-  const reasons: Record<string, string> = {
-    seo: "The strategy points to search intent, website content, or category education as a useful acquisition path.",
-    x: "The strategy points to founder-led distribution, product narrative, or an audience that can be reached through short-form posts.",
-    reddit:
-      "The strategy points to niche communities where the problem can be researched and joined through careful draft-first replies.",
-    "hacker-news":
-      "The strategy points to a technical or founder audience where launches and product discussions can create early signal.",
-  };
-  return (
-    reasons[channelId] ?? "Recommended by the marketing strategy analysis."
-  );
 }
 
 function cleanCompetitorName(value: string) {
