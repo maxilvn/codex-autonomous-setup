@@ -1565,10 +1565,7 @@ function shouldRunInitialAnalysis(project: ProjectState) {
 }
 
 function isBrandAnalysisComplete(project: ProjectState) {
-  const isRunning =
-    project.latestRun?.kind === "initial_analysis" &&
-    project.latestRun?.status === "running";
-  return !isRunning && project.docs.every(hasDocumentContent);
+  return project.docs.length > 0 && project.docs.every(hasDocumentContent);
 }
 
 function hasDocumentContent(doc: ContextDoc) {
