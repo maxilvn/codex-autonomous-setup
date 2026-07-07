@@ -29,8 +29,9 @@ export interface ContextDoc {
 
 export interface RunState {
   id: string;
-  kind: "initial_analysis" | "x_account_analysis";
+  kind: "initial_analysis" | "x_account_analysis" | "channel_analysis";
   status: "running" | "completed" | "failed";
+  channels: string[];
   providerId?: string | null;
   providerTitle?: string | null;
   externalSessionId?: string | null;
@@ -73,7 +74,7 @@ export interface ChromeProfile {
   avatarPath?: string | null;
   avatarDataUrl?: string | null;
   profileColor?: number | null;
-  hasXSession: boolean;
+  sessions: Record<string, boolean>;
   isRecommended: boolean;
   isDefault: boolean;
 }
@@ -83,6 +84,8 @@ export interface ProjectState {
   agentProvider: AgentProviderStatus;
   docs: ContextDoc[];
   channelSetups: ChannelSetup[];
+  chromeProfileId?: string | null;
+  selectedChannels: string[];
   latestRun?: RunState | null;
   runActivity: RunActivity[];
 }
